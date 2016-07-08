@@ -1,4 +1,6 @@
---http://pastebin.com/Nq5jEJfM
+--- Second_Fry's openbee AE2 fork
+--- Original code and idea by Forte40 @ GitHub
+--- Hosted at http://pastebin.com/XxjND24H
 
 if not http then
   print("No access to web")
