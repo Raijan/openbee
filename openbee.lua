@@ -1,132 +1,102 @@
-local version = {
-  ["major"] = 2,
-  ["minor"] = 2,
-  ["patch"] = 1
-}
-
-function loadFile(fileName)
-  local f = fs.open(fileName, "r")
-  if f ~= nil then
-    local data = f.readAll()
-    f.close()
-    return textutils.unserialize(data)
-  end
-end
-
-function saveFile(fileName, data)
-  local f = fs.open(fileName, "w")
-  f.write(textutils.serialize(data))
-  f.close()
-end
-
-local config = loadFile("bee.config")
-if config == nil then
-  config = {
-    ["apiarySide"] = "left",
-    ["chestSide"] = "top",
-    ["chestDir"] = "up",
-    ["productDir"] = "down",
-    ["analyzerDir"] = "east",
-    ["ignoreSpecies"] = {
-      "Leporine"
-    }
+------ Second_Fry's openbee AE2 fork (v1.0.0)
+------ Original idea and code by Forte40 @ GitHub
+--- Default configuration
+--- All sides are used for peripheral.wrap calls. Can be proxied (check OpenPeripheral Proxy).
+local configDefault = {
+  ["apiarySide"] = "left",
+  ["AEinterfaceSide"] = "tileinterface_0",
+  ["apiaryDir"] = "down", -- direction from interface to apiary
+  ["interfaceDir"] = "up", -- direction from apiary to interface
+  ["productDir"] = "down", -- direction from apiary to throw bee products in
+  ["analyzerDir"] = "east", -- direction from AE wrapped peripheral to analyze bees
+  ["ignoreSpecies"] = {
+    "Leporine"
+  },
+  ["useAnalyzer"] = true,
+  ["useReferenceBees"] = true, -- try to keep 1 pure princess and 1 pure drone
+  ["traitPriority"] = { -- default trait priority to specify which traits to target. Check README.md or forum post
+    "speciesChance",
+    "speed",
+    "fertility",
+    "nocturnal",
+    "tolerantFlyer",
+    "temperatureTolerance",
+    "humidityTolerance",
+    "caveDwelling",
+    "effect",
+    "flowering",
+    "flowerProvider",
+    "territory"
   }
-  saveFile("bee.config", config)
-end
-
-local useAnalyzer = true
-local useReferenceBees = true
-
-local traitPriority = {
-  "speciesChance", 
-  "speed", 
-  "fertility", 
-  "nocturnal", 
-  "tolerantFlyer", 
-  "caveDwelling", 
-  "temperatureTolerance", 
-  "humidityTolerance", 
-  "effect", 
-  "flowering", 
-  "flowerProvider", 
-  "territory"
 }
 
-function setPriorities(priority)
-  local species = nil
-  local priorityNum = 1
-  for traitNum, trait in ipairs(priority) do
-    local found = false
-    for traitPriorityNum = 1, #traitPriority do
-      if trait == traitPriority[traitPriorityNum] then
-        found = true
-        if priorityNum ~= traitPriorityNum then
-          table.remove(traitPriority, traitPriorityNum)
-          table.insert(traitPriority, priorityNum, trait)
-        end
-        priorityNum = priorityNum + 1
-        break
-      end
+--- Global variables
+local catalog = {} -- catalog is really a catalog. Check catalogBees
+catalog.princesses = {}
+catalog.princessesBySpecies = {}
+catalog.drones = {}
+catalog.dronesBySpecies = {}
+catalog.queens = {}
+catalog.referenceDronesBySpecies = {}
+catalog.referencePrincessesBySpecies = {}
+catalog.referencePairBySpecies = {}
+local config -- config is used as configation registry. Check bee.config
+local logFile -- logFile is used in debug()
+local logFileName -- logFileName is displayed at the end of script execution
+local traitPriority -- traitPriority is used to specify which traits to target
+local version -- version is displayed at the start of script execution
+
+--- Main program cycle
+function main(tArgs)
+  -- Most of initialization
+  init(tArgs)
+  local targetSpecies = setPriorities(tArgs)
+  -- Header
+  term.setTextColor(colors.green)
+  log(" > Second_Fry's openbee AE2 fork")
+  log(string.format(" (v%d.%d.%d)\n", version.major, version.minor, version.patch))
+  logLine(" > Original idea and code by Forte40 @ GitHub")
+  term.setTextColor(colors.white)
+  -- Argument list
+  debug("  Got arguments: ")
+  debugTable(tArgs)
+  debug("\n")
+  -- Priority list result
+  debug("  Priority list: ")
+  debugTable(traitPriority)
+  debug("\n")
+  -- Last bits of initialization in local scope
+  local interface, apiary = getPeripherals()
+  local mutations, beeNames = buildMutationGraph(apiary)
+  local scorers = buildScoring()
+  debug("  Initial clearing: apiary\n")
+  clearApiary(interface, apiary)
+  debug("  Initial clearing: analyzer\n")
+  clearAnalyzer(interface)
+  log("  Initial catalog\n")
+  local catalog = catalogBees(interface, scorers)
+  if #catalog.queens > 0 then log("  Using all queens\n") end
+  while #catalog.queens > 0 do
+    breedQueen(interface, apiary, catalog.queens[1])
+    catalog = catalogBees(interface, scorers)
+  end
+  if targetSpecies ~= nil then
+    targetSpecies = tArgs[1]:sub(1,1):upper()..tArgs[1]:sub(2):lower()
+    if beeNames[targetSpecies] == true then
+      breedTargetSpecies(mutations, interface, apiary, scorers, targetSpecies)
+    else
+      log("  Species "..targetSpecies.." is not found\n")
     end
-    if not found then
-      species = trait
+  else
+    while true do
+      breedAllSpecies(mutations, interface, apiary, scorers, buildTargetSpeciesList(catalog, apiary))
+      catalog = catalogBees(interface, scorers)
     end
   end
-  return species
 end
 
--- logging ----------------------------
-
-local logFile
-function setupLog()
-  local logCount = 0
-  while fs.exists(string.format("bee.%d.log", logCount)) do
-    logCount = logCount + 1
-  end
-  logFile = fs.open(string.format("bee.%d.log", logCount), "w")
-  return string.format("bee.%d.log", logCount)
-end
-
-function log(msg)
-  msg = msg or ""
-  logFile.write(tostring(msg))
-  logFile.flush()
-  io.write(msg)
-end
-
-function logLine(...)
-  for i, msg in ipairs(arg) do
-    if msg == nil then
-      msg = ""
-    end
-    logFile.write(msg)
-    io.write(msg)
-  end
-  logFile.write("\n")
-  logFile.flush()
-  io.write("\n")
-end
-
-function getPeripherals()
-  local names = table.concat(peripheral.getNames(), ", ")
-  local chestPeripheral = peripheral.wrap(config.chestSide)
-  if chestPeripheral == nil then
-    error("Bee chest not found at " .. config.chestSide .. ".  Valid config values are " .. names .. ".")
-  end
-  local apiaryPeripheral = peripheral.wrap(config.apiarySide)
-  if apiaryPeripheral == nil then
-    error("Apiary not found at " .. config.apiarySide .. ".  Valid config values are " .. names .. ".")
-  end
-  -- check config directions
-  if not pcall(function () chestPeripheral.pullItem(config.analyzerDir, 9) end) then
-    logLine("Analyzer direction incorrect.  Direction should be relative to bee chest.")
-    useAnalyzer = false
-  end
-  return chestPeripheral, apiaryPeripheral
-end
-
+--- Forte40 code with rewrites
 -- utility functions ------------------
-
 function choose(list1, list2)
   local newList = {}
   if list2 then
@@ -147,20 +117,6 @@ function choose(list1, list2)
     end
   end
   return newList
-end
-
--- fix for yet another API change from openp
-function getAllBees(inv)
-  local notbees = inv.getAllStacks()
-  local bees = {}
-  for slot, bee in pairs(notbees) do
-    bees[slot] = bee.all()
-  end
-  return bees
-end
-
-function getBeeInSlot(inv, slot)
-  return inv.getStackInSlot(slot)
 end
 
 -- fix for some versions returning bees.species.*
@@ -198,40 +154,14 @@ end
 
 function beeName(bee)
   if bee.individual.active then
-    return bee.slot .. "=" .. bee.individual.active.species.name:sub(1,3) .. "-" ..
-                              bee.individual.inactive.species.name:sub(1,3)
+    return bee.individual.active.species.name:sub(1,3) .. "-" ..
+            bee.individual.inactive.species.name:sub(1,3)
   else
-    return bee.slot .. "=" .. bee.individual.displayName:sub(1,3)
-  end
-end
-
-function printBee(bee)
-  if bee.individual.isAnalyzed then
-    local active = bee.individual.active
-    local inactive = bee.individual.inactive
-    if active.species.name ~= inactive.species.name then
-      log(string.format("%s-%s", active.species.name, inactive.species.name))
-    else
-      log(active.species.name)
-    end
-    if bee.raw_name == "item.for.beedronege" then
-      log(" Drone")
-    elseif bee.raw_name == "item.for.beeprincessge" then
-      log(" Princess")
-    else
-      log(" Queen")
-    end
-    --log((active.nocturnal and " Nocturnal" or " "))
-    --log((active.tolerantFlyer and " Flyer" or " "))
-    --log((active.caveDwelling and " Cave" or " "))
-    logLine()
-    --logLine(string.format("Fert: %d  Speed: %d  Lifespan: %d", active.fertility, active.speed, active.lifespan))
-  else
+    return bee.individual.displayName:sub(1,3)
   end
 end
 
 -- mutations and scoring --------------
-
 -- build mutation graph
 function buildMutationGraph(apiary)
   local mutations = {}
@@ -275,18 +205,18 @@ function buildTargetSpeciesList(catalog, apiary)
       end
     end
     if not skip and
-        ( -- skip if reference pair exists
-          catalog.referencePrincessesBySpecies[parents.result] == nil or
-          catalog.referenceDronesBySpecies[parents.result] == nil
-        ) and
-        ( -- princess 1 and drone 2 available
-          catalog.princessesBySpecies[parents.allele1] ~= nil and
-          catalog.dronesBySpecies[parents.allele2] ~= nil
-        ) or
-        ( -- princess 2 and drone 1 available
-          catalog.princessesBySpecies[parents.allele2] ~= nil and
-          catalog.dronesBySpecies[parents.allele1] ~= nil
-        ) then
+            ( -- skip if reference pair exists
+            catalog.referencePrincessesBySpecies[parents.result] == nil or
+                    catalog.referenceDronesBySpecies[parents.result] == nil
+            ) and
+            ( -- princess 1 and drone 2 available
+            catalog.princessesBySpecies[parents.allele1] ~= nil and
+                    catalog.dronesBySpecies[parents.allele2] ~= nil
+            ) or
+            ( -- princess 2 and drone 1 available
+            catalog.princessesBySpecies[parents.allele2] ~= nil and
+                    catalog.dronesBySpecies[parents.allele1] ~= nil
+            ) then
       table.insert(targetSpeciesList, parents.result)
     end
   end
@@ -320,9 +250,9 @@ function mutateBeeChance(mutations, princess, drone, targetSpecies)
   if princess.individual.isAnalyzed then
     if drone.individual.isAnalyzed then
       return (mutateSpeciesChance(mutations, princess.individual.active.species.name, drone.individual.active.species.name, targetSpecies) / 4
-             +mutateSpeciesChance(mutations, princess.individual.inactive.species.name, drone.individual.active.species.name, targetSpecies) / 4
-             +mutateSpeciesChance(mutations, princess.individual.active.species.name, drone.individual.inactive.species.name, targetSpecies) / 4
-             +mutateSpeciesChance(mutations, princess.individual.inactive.species.name, drone.individual.inactive.species.name, targetSpecies) / 4)
+              +mutateSpeciesChance(mutations, princess.individual.inactive.species.name, drone.individual.active.species.name, targetSpecies) / 4
+              +mutateSpeciesChance(mutations, princess.individual.active.species.name, drone.individual.inactive.species.name, targetSpecies) / 4
+              +mutateSpeciesChance(mutations, princess.individual.inactive.species.name, drone.individual.inactive.species.name, targetSpecies) / 4)
     end
   elseif drone.individual.isAnalyzed then
   else
@@ -408,7 +338,7 @@ function buildScoring()
     ["territory"] = function(bee)
       if bee.individual.isAnalyzed then
         return ((bee.individual.active.territory[1] * bee.individual.active.territory[2] * bee.individual.active.territory[3]) +
-                     (bee.individual.inactive.territory[1] * bee.individual.inactive.territory[2] * bee.individual.inactive.territory[3])) / 2
+                (bee.individual.inactive.territory[1] * bee.individual.inactive.territory[2] * bee.individual.inactive.territory[3])) / 2
       else
         return 0
       end
@@ -454,223 +384,29 @@ function betterTraits(scorers, a, b)
   return traits
 end
 
--- cataloging functions ---------------
-
-function addBySpecies(beesBySpecies, bee)
-  if bee.individual.isAnalyzed then
-    if beesBySpecies[bee.individual.active.species.name] == nil then
-      beesBySpecies[bee.individual.active.species.name] = {bee}
-    else
-      table.insert(beesBySpecies[bee.individual.active.species.name], bee)
-    end
-    if bee.individual.inactive.species.name ~= bee.individual.active.species.name then
-      if beesBySpecies[bee.individual.inactive.species.name] == nil then
-        beesBySpecies[bee.individual.inactive.species.name] = {bee}
-      else
-        table.insert(beesBySpecies[bee.individual.inactive.species.name], bee)
-      end
-    end
-  else
-    if beesBySpecies[bee.individual.displayName] == nil then
-      beesBySpecies[bee.individual.displayName] = {bee}
-    else
-      table.insert(beesBySpecies[bee.individual.displayName], bee)
-    end
-  end
-end
-
-function catalogBees(inv, scorers)
-  catalog = {}
-  catalog.princesses = {}
-  catalog.princessesBySpecies = {}
-  catalog.drones = {}
-  catalog.dronesBySpecies = {}
-  catalog.queens = {}
-  catalog.referenceDronesBySpecies = {}
-  catalog.referencePrincessesBySpecies = {}
-  catalog.referencePairBySpecies = {}
-
-  -- phase 0 -- analyze bees and ditch product
-  inv.condenseItems()
-  logLine(string.format("scanning %d slots", inv.size))
-  if useAnalyzer == true then
-    local analyzeCount = 0
-    local bees = getAllBees(inv)
-    for slot, bee in pairs(bees) do
-      if bee.individual == nil then
-        inv.pushItem(config.chestDir, slot)
-      elseif not bee.individual.isAnalyzed then
-        analyzeBee(inv, slot)
-        analyzeCount = analyzeCount + 1
-      end
-    end
-    logLine(string.format("analyzed %d new bees", analyzeCount))
-  end
-  -- phase 1 -- mark reference bees
-  inv.condenseItems()
-  local referenceBeeCount = 0
-  local referenceDroneCount = 0
-  local referencePrincessCount = 0
-  local isDrone = nil
-  local bees = getAllBees(inv)
-  if useReferenceBees then
-    for slot = 1, #bees do
-      local bee = bees[slot]
-      if bee.individual ~= nil then
-        fixBee(bee)
-        local referenceBySpecies = nil
-        if bee.raw_name == "item.for.beedronege" then -- drones
-          isDrone = true
-          referenceBySpecies = catalog.referenceDronesBySpecies
-        elseif bee.raw_name == "item.for.beeprincessge" then -- princess
-          isDrone = false
-          referenceBySpecies = catalog.referencePrincessesBySpecies
-        else
-          isDrone = nil
-        end
-        if referenceBySpecies ~= nil and bee.individual.isAnalyzed and bee.individual.active.species.name == bee.individual.inactive.species.name then
-          local species = bee.individual.active.species.name
-          if referenceBySpecies[species] == nil or
-              compareBees(scorers, bee, referenceBySpecies[species]) then
-            if referenceBySpecies[species] == nil then
-              referenceBeeCount = referenceBeeCount + 1
-              if isDrone == true then
-                referenceDroneCount = referenceDroneCount + 1
-              elseif isDrone == false then
-                referencePrincessCount = referencePrincessCount + 1
-              end
-              if slot ~= referenceBeeCount then
-                inv.swapStacks(slot, referenceBeeCount)
-              end
-              bee.slot = referenceBeeCount
-            else
-              inv.swapStacks(slot, referenceBySpecies[species].slot)
-              bee.slot = referenceBySpecies[species].slot
-            end
-            referenceBySpecies[species] = bee
-            if catalog.referencePrincessesBySpecies[species] ~= nil and catalog.referenceDronesBySpecies[species] ~= nil then
-              catalog.referencePairBySpecies[species] = true
-            end
-          end
-        end
-      end
-    end
-    logLine(string.format("found %d reference bees, %d princesses, %d drones", referenceBeeCount, referencePrincessCount, referenceDroneCount))
-    log("reference pairs")
-    for species, _ in pairs(catalog.referencePairBySpecies) do
-      log(", ")
-      log(species)
-    end
-    logLine()
-  end
-  -- phase 2 -- ditch obsolete drones
-  bees = getAllBees(inv)
-  local extraDronesBySpecies = {}
-  local ditchSlot = 1
-  for slot = 1 + referenceBeeCount, #bees do
-    local bee = bees[slot]
-    fixBee(bee)
-    bee.slot = slot
-    -- remove analyzed drones where both the active and inactive species have
-    --   a both reference princess and drone
-    if (
-      bee.raw_name == "item.for.beedronege" and
-      bee.individual.isAnalyzed and (
-        catalog.referencePrincessesBySpecies[bee.individual.active.species.name] ~= nil and
-        catalog.referenceDronesBySpecies[bee.individual.active.species.name] ~= nil and
-        catalog.referencePrincessesBySpecies[bee.individual.inactive.species.name] ~= nil and
-        catalog.referenceDronesBySpecies[bee.individual.inactive.species.name] ~= nil
-      )
-    ) then
-      local activeDroneTraits = betterTraits(scorers, catalog.referenceDronesBySpecies[bee.individual.active.species.name], bee)
-      local inactiveDroneTraits = betterTraits(scorers, catalog.referenceDronesBySpecies[bee.individual.inactive.species.name], bee)
-      if #activeDroneTraits > 0 or #inactiveDroneTraits > 0 then
-        -- keep current bee because it has some trait that is better
-        -- manipulate reference bee to have better yet less important attribute
-        -- this ditches more bees while keeping at least one with the attribute
-        -- the cataloging step will fix the manipulation
-        for i, trait in ipairs(activeDroneTraits) do
-          catalog.referenceDronesBySpecies[bee.individual.active.species.name].individual.active[trait] = bee.individual.active[trait]
-          catalog.referenceDronesBySpecies[bee.individual.active.species.name].individual.inactive[trait] = bee.individual.inactive[trait]
-        end
-        for i, trait in ipairs(inactiveDroneTraits) do
-          catalog.referenceDronesBySpecies[bee.individual.inactive.species.name].individual.active[trait] = bee.individual.active[trait]
-          catalog.referenceDronesBySpecies[bee.individual.inactive.species.name].individual.inactive[trait] = bee.individual.inactive[trait]
-        end
-      else
-        -- keep 1 extra drone around if purebreed
-        -- this speeds up breeding by not ditching drones you just breed from reference bees
-        -- when the reference bee drone output is still mutating
-        local ditchDrone = nil
-        if bee.individual.active.species.name == bee.individual.inactive.species.name then
-          if extraDronesBySpecies[bee.individual.active.species.name] == nil then
-            extraDronesBySpecies[bee.individual.active.species.name] = bee
-            bee = nil
-          elseif compareBees(bee, extraDronesBySpecies[bee.individual.active.species.name]) then
-            ditchDrone = extraDronesBySpecies[bee.individual.active.species.name]
-            extraDronesBySpecies[bee.individual.active.species.name] = bee
-            bee = ditchDrone
-          end
-        end
-        -- ditch drone
-        if bee ~= nil then
-          if inv.pushItem(config.chestDir, bee.slot) == 0 then
-            error("ditch chest is full")
-          end
-        end
-      end
-    end
-  end
-  -- phase 3 -- catalog bees
-  bees = getAllBees(inv)
-  for slot, bee in pairs(bees) do
-    fixBee(bee)
-    bee.slot = slot
-    if slot > referenceBeeCount then
-      if bee.raw_name == "item.for.beedronege" then -- drones
-        table.insert(catalog.drones, bee)
-        addBySpecies(catalog.dronesBySpecies, bee)
-      elseif bee.raw_name == "item.for.beeprincessge" then -- princess
-        table.insert(catalog.princesses, bee)
-        addBySpecies(catalog.princessesBySpecies, bee)
-      elseif bee.id == 13339 then -- queens
-        table.insert(catalog.queens, bee)
-      end
-    else
-      if bee.raw_name == "item.for.beedronege" and bee.qty > 1 then
-        table.insert(catalog.drones, bee)
-        addBySpecies(catalog.dronesBySpecies, bee)
-      end
-    end
-  end
-  logLine(string.format("found %d queens, %d princesses, %d drones",
-      #catalog.queens, #catalog.princesses, #catalog.drones))
-  return catalog
-end
-
 -- interaction functions --------------
 
-function clearApiary(inv, apiary)
-  local bees = getAllBees(apiary)
+function clearApiary(interface, apiary)
+  local bees = apiary.getAllStacks(false)
   -- wait for queen to die
   if (bees[1] ~= nil and bees[1].raw_name == "item.for.beequeenge")
-      or (bees[1] ~= nil and bees[2] ~= nil) then
-    log("waiting for apiary")
+          or (bees[1] ~= nil and bees[2] ~= nil) then
+    log("  Waiting for apiary")
     while true do
       sleep(5)
-      bees = getAllBees(apiary)
+      bees = apiary.getAllStacks(false)
       if bees[1] == nil then
         break
       end
       log(".")
     end
+    log("\n")
   end
-  logLine()
   for slot = 3, 9 do
     local bee = bees[slot]
     if bee ~= nil then
       if bee.raw_name == "item.for.beedronege" or bee.raw_name == "item.for.beeprincessge" then
-        apiary.pushItem(config.chestDir, slot, 64)
+        apiary.pushItem(config.interfaceDir, slot, 64)
       else
         apiary.pushItem(config.productDir, slot, 64)
       end
@@ -678,73 +414,97 @@ function clearApiary(inv, apiary)
   end
 end
 
-function clearAnalyzer(inv)
-  if not useAnalyzer then
+function clearAnalyzer(interface)
+  if not config.useAnalyzer then
     return
   end
-  local bees = getAllBees(inv)
-  if #bees == inv.size then
-    error("chest is full")
-  end
   for analyzerSlot = 9, 12 do
-    if inv.pullItem(config.analyzerDir, analyzerSlot) == 0 then
+    if interface.pullItem(config.analyzerDir, analyzerSlot) == 0 then
       break
     end
   end
 end
 
-function analyzeBee(inv, slot)
-  clearAnalyzer(inv)
-  log("analyzing bee ")
-  log(slot)
-  log("...")
-  local freeSlot
-  if inv.pushItem(config.analyzerDir, slot, 64, 3) > 0 then
-    while true do
-      -- constantly check in case of inventory manipulation by player
-      local bees = getAllBees(inv)
-      freeSlot = nil
-      for i = 1, inv.size do
-        if bees[i] == nil then
-          freeSlot = i
-          break
-        end
-      end
-      if inv.pullItem(config.analyzerDir, 9) > 0 then
-        break
-      end
-      sleep(1)
+function analyzeBee(interface, item)
+  clearAnalyzer(interface)
+  logLine("    Analyzing "..item.item.display_name)
+  if not interface.canExport(config.analyzerDir) then
+    log("  ! Analyzer not found, disabling usage\n")
+    config.useAnalyzer = false
+  end
+  interface.exportItem(item.fingerprint, config.analyzerDir, 64, 3)
+  while true do
+    if interface.pullItem(config.analyzerDir, 9) > 0 then
+      break
     end
+    sleep(5)
+  end
+end
+
+function breedBees(interface, apiary, princess, drone)
+  clearApiary(interface, apiary)
+  interface.exportItem(princess.fingerprint, config.apiaryDir, 1, 1)
+  interface.exportItem(drone.fingerprint, config.apiaryDir, 1, 2)
+  clearApiary(interface, apiary)
+end
+
+function breedQueen(interface, apiary, queen)
+  log("    Breeding "..queen.item.display_name.."\n")
+  clearApiary(interface, apiary)
+  interface.exportItem(queen.fingerprint, config.apiaryDir, 1, 1)
+  clearApiary(interface, apiary)
+end
+
+
+
+
+
+function breedAllSpecies(mutations, interface, apiary, scorers, speciesList)
+  if #speciesList == 0 then
+    log("Please add more bee species and press [Enter]")
+    io.read("*l")
   else
-    logLine("Missing Analyzer")
-    useAnalyzer = false
-    return nil
+    for i, targetSpecies in ipairs(speciesList) do
+      breedTargetSpecies(mutations, interface, apiary, scorers, targetSpecies)
+    end
   end
-  local bee = getBeeInSlot(inv, freeSlot)
-  if bee ~= nil then
-    printBee(fixBee(bee))
-  end
-  return freeSlot
 end
 
-function breedBees(inv, apiary, princess, drone)
-  clearApiary(inv, apiary)
-  apiary.pullItem(config.chestDir, princess.slot, 1, 1)
-  apiary.pullItem(config.chestDir, drone.slot, 1, 2)
-  clearApiary(inv, apiary)
-end
-
-function breedQueen(inv, apiary, queen)
-  log("breeding queen")
-  clearApiary(inv, apiary)
-  apiary.pullItem(config.chestDir, queen.slot, 1, 1)
-  clearApiary(inv, apiary)
+function breedTargetSpecies(mutations, interface, apiary, scorers, targetSpecies)
+  logLine("  Going for "..targetSpecies)
+  local catalog = catalogBees(interface, scorers)
+  while true do
+    if #catalog.princesses == 0 then
+      log("Please add more princesses and press [Enter]")
+      io.read("*l")
+      catalog = catalogBees(interface, scorers)
+    elseif #catalog.drones == 0 and next(catalog.referenceDronesBySpecies) == nil then
+      log("Please add more drones and press [Enter]")
+      io.read("*l")
+      catalog = catalogBees(interface, scorers)
+    else
+      local mates = selectPair(mutations, scorers, catalog, targetSpecies)
+      if mates ~= nil then
+        if isPureBred(mates.princess.item, mates.drone.item, targetSpecies) then
+          break
+        else
+          breedBees(interface, apiary, mates.princess, mates.drone)
+          catalog = catalogBees(interface, scorers)
+        end
+      else
+        log(string.format("Please add more bee species for %s and press [Enter]"), targetSpecies)
+        io.read("*l")
+        catalog = catalogBees(interface, scorers)
+      end
+    end
+  end
+  log("  "..targetSpecies.." is purebred")
 end
 
 -- selects best pair for target species
 --   or initiates breeding of lower species
 function selectPair(mutations, scorers, catalog, targetSpecies)
-  logLine("targetting "..targetSpecies)
+  logLine("    Targetting "..targetSpecies)
   local baseChance = 0
   if #mutations.getBeeParents(targetSpecies) > 0 then
     local parents = mutations.getBeeParents(targetSpecies)[1]
@@ -756,18 +516,18 @@ function selectPair(mutations, scorers, catalog, targetSpecies)
   local mateCombos = choose(catalog.princesses, catalog.drones)
   local mates = {}
   local haveReference = (catalog.referencePrincessesBySpecies[targetSpecies] ~= nil and
-      catalog.referenceDronesBySpecies[targetSpecies] ~= nil)
+          catalog.referenceDronesBySpecies[targetSpecies] ~= nil)
   for i, v in ipairs(mateCombos) do
-    local chance = mutateBeeChance(mutations, v[1], v[2], targetSpecies) or 0
+    local chance = mutateBeeChance(mutations, v[1].item, v[2].item, targetSpecies) or 0
     if (not haveReference and chance >= baseChance / 2) or
-        (haveReference and chance > 25) then
+            (haveReference and chance > 25) then
       local newMates = {
         ["princess"] = v[1],
         ["drone"] = v[2],
         ["speciesChance"] = chance
       }
       for trait, scorer in pairs(scorers) do
-        newMates[trait] = (scorer(v[1]) + scorer(v[2])) / 2
+        newMates[trait] = (scorer(v[1].item) + scorer(v[2].item)) / 2
       end
       table.insert(mates, newMates)
     end
@@ -776,16 +536,16 @@ function selectPair(mutations, scorers, catalog, targetSpecies)
     table.sort(mates, compareMates)
     for i = math.min(#mates, 10), 1, -1 do
       local parents = mates[i]
-      logLine(beeName(parents.princess), " ", beeName(parents.drone), " ", parents.speciesChance, " ", parents.fertility, " ",
-            parents.flowering, " ", parents.nocturnal, " ", parents.tolerantFlyer, " ", parents.caveDwelling, " ",
-            parents.lifespan, " ", parents.temperatureTolerance, " ", parents.humidityTolerance)
+      debug(beeName(parents.princess.item), " ", beeName(parents.drone.item), " ", parents.speciesChance, " ", parents.fertility, " ",
+        parents.flowering, " ", parents.nocturnal, " ", parents.tolerantFlyer, " ", parents.caveDwelling, " ",
+        parents.lifespan, " ", parents.temperatureTolerance, " ", parents.humidityTolerance)
     end
     return mates[1]
   else
     -- check for reference bees and breed if drone count is 1
     if catalog.referencePrincessesBySpecies[targetSpecies] ~= nil and
-        catalog.referenceDronesBySpecies[targetSpecies] ~= nil then
-      logLine("Breeding extra drone from reference bees")
+            catalog.referenceDronesBySpecies[targetSpecies] ~= nil then
+      log("      Breeding extra drone from reference bees\n")
       return {
         ["princess"] = catalog.referencePrincessesBySpecies[targetSpecies],
         ["drone"] = catalog.referenceDronesBySpecies[targetSpecies]
@@ -794,23 +554,22 @@ function selectPair(mutations, scorers, catalog, targetSpecies)
     -- attempt lower tier bee
     local parentss = mutations.getBeeParents(targetSpecies)
     if #parentss > 0 then
-      logLine("lower tier")
-      --print(textutils.serialize(catalog.referencePrincessesBySpecies))
+      log("      Lower tier\n")
       table.sort(parentss, function(a, b) return a.chance > b.chance end)
       local trySpecies = {}
       for i, parents in ipairs(parentss) do
         fixParents(parents)
         if (catalog.referencePairBySpecies[parents.allele2] == nil        -- no reference bee pair
-            or catalog.referenceDronesBySpecies[parents.allele2].qty <= 1 -- no extra reference drone
-            or catalog.princessesBySpecies[parents.allele2] == nil)       -- no converted princess
-            and trySpecies[parents.allele2] == nil then
+                or table.getn(catalog.referenceDronesBySpecies[parents.allele2]) < 2 -- no extra reference drone
+                or catalog.princessesBySpecies[parents.allele2] == nil)       -- no converted princess
+                and trySpecies[parents.allele2] == nil then
           table.insert(trySpecies, parents.allele2)
           trySpecies[parents.allele2] = true
         end
         if (catalog.referencePairBySpecies[parents.allele1] == nil
-            or catalog.referenceDronesBySpecies[parents.allele1].qty <= 1
-            or catalog.princessesBySpecies[parents.allele1] == nil)
-            and trySpecies[parents.allele1] == nil then
+                or table.getn(catalog.referenceDronesBySpecies[parents.allele1]) < 2
+                or catalog.princessesBySpecies[parents.allele1] == nil)
+                and trySpecies[parents.allele1] == nil then
           table.insert(trySpecies, parents.allele1)
           trySpecies[parents.allele1] = true
         end
@@ -829,9 +588,9 @@ end
 function isPureBred(bee1, bee2, targetSpecies)
   if bee1.individual.isAnalyzed and bee2.individual.isAnalyzed then
     if bee1.individual.active.species.name == bee1.individual.inactive.species.name and
-        bee2.individual.active.species.name == bee2.individual.inactive.species.name and
-        bee1.individual.active.species.name == bee2.individual.active.species.name and
-        (targetSpecies == nil or bee1.individual.active.species.name == targetSpecies) then
+            bee2.individual.active.species.name == bee2.individual.inactive.species.name and
+            bee1.individual.active.species.name == bee2.individual.active.species.name and
+            (targetSpecies == nil or bee1.individual.active.species.name == targetSpecies) then
       return true
     end
   elseif bee1.individual.isAnalyzed == false and bee2.individual.isAnalyzed == false then
@@ -842,84 +601,226 @@ function isPureBred(bee1, bee2, targetSpecies)
   return false
 end
 
-function breedTargetSpecies(mutations, inv, apiary, scorers, targetSpecies)
-  local catalog = catalogBees(inv, scorers)
-  while true do
-    if #catalog.princesses == 0 then
-      log("Please add more princesses and press [Enter]")
-      io.read("*l")
-      catalog = catalogBees(inv, scorers)
-    elseif #catalog.drones == 0 and next(catalog.referenceDronesBySpecies) == nil then
-      log("Please add more drones and press [Enter]")
-      io.read("*l")
-      catalog = catalogBees(inv, scorers)
-    else
-      local mates = selectPair(mutations, scorers, catalog, targetSpecies)
-      if mates ~= nil then
-        if isPureBred(mates.princess, mates.drone, targetSpecies) then
-          break
-        else
-          breedBees(inv, apiary, mates.princess, mates.drone)
-          catalog = catalogBees(inv, scorers)
+--- Catalog block
+function catalogBees(interface, scorers)
+  -- Clear catalog
+  catalog = {}
+  catalog.princesses = {}
+  catalog.princessesBySpecies = {}
+  catalog.drones = {}
+  catalog.dronesBySpecies = {}
+  catalog.queens = {}
+  catalog.referenceDronesBySpecies = {}
+  catalog.referencePrincessesBySpecies = {}
+  catalog.referencePairBySpecies = {}
+  -- Analyze bees
+  debug("    Analyzing bees\n")
+  if config.useAnalyzer == true then
+    local analyzeCount = 0
+    local stillAnalyzing = true
+    while stillAnalyzing do
+      local items = getAllBees(interface)
+      local analyzeCountLocal = 0
+      for _, item in ipairs(items) do
+        if not item.item.individual.isAnalyzed then
+          analyzeBee(interface, item)
+          analyzeCountLocal = analyzeCountLocal + 1
         end
-      else
-        log(string.format("Please add more bee species for %s and press [Enter]"), targetSpecies)
-        io.read("*l")
-        catalog = catalogBees(inv, scorers)
+      end
+      if analyzeCountLocal == 0 then stillAnalyzing = false else analyzeCount = analyzeCount + analyzeCountLocal end
+    end
+    if analyzeCount > 0 then log("    Analyzed "..analyzeCount.." new bees\n") end
+  end
+  -- Marking references
+  debug("    Marking refences\n")
+  local items = getAllBees(interface)
+  if config.useReferenceBees then
+    for _, item in ipairs(items) do
+      local species = item.item.individual.active.species.name
+      if item.item.raw_name == "item.for.beedronege" then -- drones
+        if catalog.referenceDronesBySpecies[species] == nil then
+          catalog.referenceDronesBySpecies[species] = {}
+        end
+        table.insert(catalog.referenceDronesBySpecies[species], item)
+      elseif item.item.raw_name == "item.for.beeprincessge" then -- princess
+        if catalog.referencePrincessesBySpecies[species] == nil then
+          catalog.referencePrincessesBySpecies[species] = {}
+        end
+        table.insert(catalog.referencePrincessesBySpecies[species], item)
+      end
+      if catalog.referencePrincessesBySpecies[species] ~= nil and catalog.referenceDronesBySpecies[species] ~= nil then
+        catalog.referencePairBySpecies[species] = true
       end
     end
+    log("    Have reference for: ")
+    for species, _ in pairs(catalog.referencePairBySpecies) do log(species..", ") end
+    log("\n")
   end
-  logLine("Bees are purebred")
-end
-
-function breedAllSpecies(mutations, inv, apiary, scorers, speciesList)
-  if #speciesList == 0 then
-    log("Please add more bee species and press [Enter]")
-    io.read("*l")
-  else
-    for i, targetSpecies in ipairs(speciesList) do
-      breedTargetSpecies(mutations, inv, apiary, scorers, targetSpecies)
+  -- Creating actual breeding catalog
+  for _, item in ipairs(items) do
+    local bee = item.item
+    local species = item.item.individual.active.species.name
+    if bee.raw_name == "item.for.beedronege" and table.getn(catalog.referenceDronesBySpecies[species]) > 1 then
+      table.insert(catalog.drones, item)
+      addBySpecies(catalog.dronesBySpecies, item)
+    elseif bee.raw_name == "item.for.beeprincessge" and table.getn(catalog.referencePrincessesBySpecies[species]) > 1 then
+      table.insert(catalog.princesses, item)
+      addBySpecies(catalog.princessesBySpecies, item)
+    elseif bee.id == 13339 then -- queens
+      table.insert(catalog.queens, item)
     end
   end
+  log("    Usable "..#catalog.queens.." queens, "..#catalog.princesses.." princesses, "..#catalog.drones.." drones\n")
+  return catalog
 end
-
-function main(tArgs)
-  logLine(string.format("openbee version %d.%d.%d", version.major, version.minor, version.patch))
-  local targetSpecies = setPriorities(tArgs)
-  log("priority:")
-  for _, priority in ipairs(traitPriority) do
-    log(" "..priority)
-  end
-  logLine("")
-  local inv, apiary = getPeripherals()
-  inv.size = inv.getInventorySize()
-  local mutations, beeNames = buildMutationGraph(apiary)
-  local scorers = buildScoring()
-  clearApiary(inv, apiary)
-  clearAnalyzer(inv)
-  local catalog = catalogBees(inv, scorers)
-  while #catalog.queens > 0 do
-    breedQueen(inv, apiary, catalog.queens[1])
-    catalog = catalogBees(inv, scorers)
-  end
-  if targetSpecies ~= nil then
-    targetSpecies = tArgs[1]:sub(1,1):upper()..tArgs[1]:sub(2):lower()
-    if beeNames[targetSpecies] == true then
-      breedTargetSpecies(mutations, inv, apiary, scorers, targetSpecies)
-    else
-      logLine(string.format("Species '%s' not found.", targetSpecies))
+function addBySpecies(beesBySpecies, item)
+  local bee = item.item
+  if bee.individual.isAnalyzed then
+    if beesBySpecies[bee.individual.active.species.name] == nil then
+      beesBySpecies[bee.individual.active.species.name] = {}
+    end
+    table.insert(beesBySpecies[bee.individual.active.species.name], item)
+    if bee.individual.inactive.species.name ~= bee.individual.active.species.name then
+      if beesBySpecies[bee.individual.inactive.species.name] == nil then
+        beesBySpecies[bee.individual.inactive.species.name] = {}
+      end
+      table.insert(beesBySpecies[bee.individual.inactive.species.name], item)
     end
   else
-    while true do
-      breedAllSpecies(mutations, inv, apiary, scorers, buildTargetSpeciesList(catalog, apiary))
-      catalog = catalogBees(inv, scorers)
+    if beesBySpecies[bee.individual.displayName] == nil then
+      beesBySpecies[bee.individual.displayName] = {}
     end
+    table.insert(beesBySpecies[bee.individual.displayName], item)
   end
 end
 
-local logFileName = setupLog()
+--- Get all bees from AE network
+function getAllBees(interface)
+  local avail = interface.getAvailableItems('ALL')
+  local bees = {}
+  for _, item in ipairs(avail) do
+    if item.fingerprint.id == "Forestry:beeDroneGE"
+            or item.fingerprint.id == "Forestry:beePrincessGE"
+            or item.fingerprint.id == "Forestry:beeQueenGE"
+    then
+      table.insert(bees, item)
+    end
+  end
+  return bees
+end
+
+--- Initialization of peripherals
+function getPeripherals()
+  local names = table.concat(peripheral.getNames(), ", ")
+  local peripheralInterface = peripheral.wrap(config.AEinterfaceSide)
+  if peripheralInterface == nil or peripheral.getType(config.AEinterfaceSide) ~= "tileinterface" then
+    log("! AE Interface not found at " .. config.AEinterfaceSide .. ".  Valid config values are " .. names .. ".")
+    error("AE Interface not found!")
+  end
+  local peripheralAriary = peripheral.wrap(config.apiarySide)
+  if peripheralAriary == nil then
+    log("! Apiary not found at " .. config.apiarySide .. ".  Valid config values are " .. names .. ".")
+    error("Apiary not found!")
+  end
+  -- Analyzer test
+  if not pcall(function () peripheralInterface.canExport(config.analyzerDir) end) then
+    log("! AE Interface can't export to Analyzer side. Analyzer disabled.\n")
+    config.useAnalyzer = false
+  end
+  return peripheralInterface, peripheralAriary
+end
+
+--- Initialization
+function init(tArgs)
+  -- Create log file and store it as local variable
+  setupLog()
+  -- Version
+  version = {
+    ["major"] = 1,
+    ["minor"] = 0,
+    ["patch"] = 0
+  }
+  -- Read config or write default
+  config = loadFile("bee.config")
+  if config == nil then
+    config = configDefault
+    saveFile("bee.config", config)
+  end
+  -- Set trait priority according to input
+  traitPriority = config.traitPriority
+end
+
+--- Switching priorities according to requested
+function setPriorities(priority)
+  local species
+  local priorityNum = 1
+  for traitNum, trait in ipairs(priority) do
+    local found = false
+    for traitPriorityNum = 1, #traitPriority do
+      if trait == traitPriority[traitPriorityNum] then
+        found = true
+        if priorityNum ~= traitPriorityNum then
+          table.remove(traitPriority, traitPriorityNum)
+          table.insert(traitPriority, priorityNum, trait)
+        end
+        priorityNum = priorityNum + 1
+        break
+      end
+    end
+    if not found then
+      species = trait
+    end
+  end
+  return species
+end
+
+--- Reading and writing config
+function loadFile(fileName)
+  local f = fs.open(fileName, "r")
+  if f ~= nil then
+    local data = f.readAll()
+    f.close()
+    return textutils.unserialize(data)
+  end
+end
+function saveFile(fileName, data)
+  local f = fs.open(fileName, "w")
+  f.write(textutils.serialize(data))
+  f.close()
+end
+
+--- Logging
+function debugTable(tArgs)
+  for _, msg in ipairs(tArgs) do
+    if msg then logFile.write(tostring(msg)) end
+    if _ > 1 then logFile.write(" ") end
+  end
+  logFile.flush()
+end
+function debug(...)
+  debugTable(arg)
+end
+function logTable(tArgs)
+  debugTable(tArgs)
+  for _, msg in ipairs(tArgs) do
+    if msg then io.write(msg) end
+    if _ > 1 then io.write(" ") end
+  end
+end
+function log(...)
+  logTable(arg)
+end
+function logLine(...) logTable(arg); log("\n") end
+function setupLog()
+  local logCount = 0
+  while fs.exists(string.format("bee.%d.log", logCount)) do logCount = logCount + 1 end
+  logFile = fs.open(string.format("bee.%d.log", logCount), "w")
+  logFileName = string.format("bee.%d.log", logCount)
+end
+
+--- Run!
 local status, err = pcall(main, {...})
 if not status then
-  logLine(err)
+  io.write(err.."\n")
 end
-print("Log file is "..logFileName)
+io.write("Log file is "..logFileName.."\n")
