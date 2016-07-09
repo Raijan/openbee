@@ -1,20 +1,22 @@
------- Second_Fry's openbee AE2 fork (v1.0.0)
+------ Second_Fry's openbee AE2 fork (v2.0.0)
 ------ Original idea and code by Forte40 @ GitHub
 --- Default configuration
 --- All sides are used for peripheral.wrap calls. Can be proxied (check OpenPeripheral Proxy).
 local configDefault = {
-  ["apiarySide"] = "left",
-  ["AEinterfaceSide"] = "tileinterface_0",
-  ["apiaryDir"] = "down", -- direction from interface to apiary
-  ["interfaceDir"] = "up", -- direction from apiary to interface
-  ["productDir"] = "down", -- direction from apiary to throw bee products in
-  ["analyzerDir"] = "east", -- direction from AE wrapped peripheral to analyze bees
-  ["ignoreSpecies"] = {
-    "Leporine"
-  },
-  ["useAnalyzer"] = true,
-  ["useReferenceBees"] = true, -- try to keep 1 pure princess and 1 pure drone
-  ["traitPriority"] = { -- default trait priority to specify which traits to target. Check README.md or forum post
+  ['storageProvider'] = 'openbee/StorageAE.lua', -- allows different storage backends
+  ['breederProvider'] = 'openbee/BreederApiary.lua', -- allows different breeder backends
+
+  -- StorageAE block
+  ['AE2MEInterfaceProbe'] = true, -- automatic probe for AE2 ME Interface
+  -- ['AE2MEInterfaceSide'] = 'north', -- set here to skip probing and setup
+
+  -- BreederApiary block
+  ['apiaryProbe'] = true, -- automatic probe for Apiary
+  -- ['apiarySide'] = 'north', -- set here to skip probing and setup
+
+  -- Trait priorities block
+  -- You probably down want to edit this, just supply them at runtime. Check README.md
+  ["traitPriority"] = {
     "speciesChance",
     "speed",
     "fertility",
@@ -27,7 +29,19 @@ local configDefault = {
     "flowering",
     "flowerProvider",
     "territory"
-  }
+  },
+
+  -- Old shit, plz remove
+  ["apiaryDir"] = "down", -- direction from interface to apiary
+  ["interfaceDir"] = "up", -- direction from apiary to interface
+  ["productDir"] = "down", -- direction from apiary to throw bee products in
+  ["analyzerDir"] = "east", -- direction from AE wrapped peripheral to analyze bees
+  ["ignoreSpecies"] = {
+    "Leporine"
+  },
+  ["useAnalyzer"] = true,
+  ["useReferenceBees"] = true -- try to keep 1 pure princess and 1 pure drone
+
 }
 
 --- Global variables
@@ -40,17 +54,9 @@ catalog.queens = {}
 catalog.referenceDronesBySpecies = {}
 catalog.referencePrincessesBySpecies = {}
 catalog.referencePairBySpecies = {}
-local config -- config is used as configation registry. Check bee.config
-local logFile -- logFile is used in debug()
-local logFileName -- logFileName is displayed at the end of script execution
-local traitPriority -- traitPriority is used to specify which traits to target
-local version -- version is displayed at the start of script execution
 
 --- Main program cycle
 function main(tArgs)
-  -- Most of initialization
-  init(tArgs)
-  local targetSpecies = setPriorities(tArgs)
   -- Header
   term.setTextColor(colors.green)
   log(" > Second_Fry's openbee AE2 fork")
@@ -498,7 +504,7 @@ function breedTargetSpecies(mutations, interface, apiary, scorers, targetSpecies
       end
     end
   end
-  log("  "..targetSpecies.." is purebred")
+  log("  "..targetSpecies.." is purebred\n")
 end
 
 -- selects best pair for target species
@@ -694,133 +700,224 @@ function addBySpecies(beesBySpecies, item)
   end
 end
 
---- Get all bees from AE network
-function getAllBees(interface)
-  local avail = interface.getAvailableItems('ALL')
-  local bees = {}
-  for _, item in ipairs(avail) do
-    if item.fingerprint.id == "Forestry:beeDroneGE"
-            or item.fingerprint.id == "Forestry:beePrincessGE"
-            or item.fingerprint.id == "Forestry:beeQueenGE"
-    then
-      table.insert(bees, item)
+--- Create table-based classes
+-- @author http://lua-users.org/wiki/ObjectOrientationTutorial
+function Creator(...)
+  -- "cls" is the new class
+  local cls, bases = {}, {...}
+  -- copy base class contents into the new class
+  for i, base in ipairs(bases) do
+    for k, v in pairs(base) do
+      cls[k] = v
     end
   end
-  return bees
+  -- set the class's __index, and start filling an "is_a" table that contains this class and all of its bases
+  -- so you can do an "instance of" check using my_instance.is_a[MyClass]
+  cls.__index, cls.is_a = cls, {[cls] = true}
+  for i, base in ipairs(bases) do
+    for c in pairs(base.is_a) do
+      cls.is_a[c] = true
+    end
+    cls.is_a[base] = true
+  end
+  -- the class's __call metamethod
+  setmetatable(cls, {__call = function (c, ...)
+    local instance = setmetatable({}, c)
+    -- run the init method if it's there
+    local init = instance._init
+    if init then init(instance, ...) end
+    return instance
+  end})
+  -- return the new class table, that's ready to fill with methods
+  return cls
 end
 
---- Initialization of peripherals
-function getPeripherals()
-  local names = table.concat(peripheral.getNames(), ", ")
-  local peripheralInterface = peripheral.wrap(config.AEinterfaceSide)
-  if peripheralInterface == nil or peripheral.getType(config.AEinterfaceSide) ~= "tileinterface" then
-    log("! AE Interface not found at " .. config.AEinterfaceSide .. ".  Valid config values are " .. names .. ".")
-    error("AE Interface not found!")
-  end
-  local peripheralAriary = peripheral.wrap(config.apiarySide)
-  if peripheralAriary == nil then
-    log("! Apiary not found at " .. config.apiarySide .. ".  Valid config values are " .. names .. ".")
-    error("Apiary not found!")
-  end
-  -- Analyzer test
-  if not pcall(function () peripheralInterface.canExport(config.analyzerDir) end) then
-    log("! AE Interface can't export to Analyzer side. Analyzer disabled.\n")
-    config.useAnalyzer = false
-  end
-  return peripheralInterface, peripheralAriary
-end
+--- Application class
+-- WOW, many OOP, such API, much methods
+local App = Creator()
+--- Provides most of initialization
+function App:_init(args)
+  self.version = '2.0.0'
+  logger:color(colors.green)
+        :log('> Second_Fry\'s openbee AE2 fork (v' .. self.version .. ')\n')
+        :log('> Original idea and code by Forte40 @ GitHub (forked on v2.2.1)\n')
+        :color(colors.white)
 
---- Initialization
-function init(tArgs)
-  -- Create log file and store it as local variable
-  setupLog()
-  -- Version
-  version = {
-    ["major"] = 1,
-    ["minor"] = 0,
-    ["patch"] = 0
-  }
-  -- Read config or write default
-  config = loadFile("bee.config")
-  if config == nil then
-    config = configDefault
-    saveFile("bee.config", config)
-  end
-  -- Set trait priority according to input
-  traitPriority = config.traitPriority
+  fs.makeDir('.openbee')
+  self.args = args or {}
+  self.storage = self:initStorage()
+  self.breeder = self:initBreeder()
+  self.traitPriority = config.registry.traitPriority
 end
-
---- Switching priorities according to requested
-function setPriorities(priority)
-  local species
-  local priorityNum = 1
-  for traitNum, trait in ipairs(priority) do
-    local found = false
-    for traitPriorityNum = 1, #traitPriority do
-      if trait == traitPriority[traitPriorityNum] then
-        found = true
-        if priorityNum ~= traitPriorityNum then
-          table.remove(traitPriority, traitPriorityNum)
-          table.insert(traitPriority, priorityNum, trait)
-        end
-        priorityNum = priorityNum + 1
+--- Iterates over requested species and traits and setups priorities
+function App:parseArgs()
+  local priority = 1
+  local isTrait = false
+  for _, marg in ipairs(self.args) do
+    for priorityConfig = 1, #self.traitPriority do
+      if marg == self.traitPriority[priorityConfig] then
+        isTrait = true
+        table.remove(self.traitPriority, priorityConfig)
+        table.insert(self.traitPriority, priority, marg)
+        priority = priority + 1
         break
       end
     end
-    if not found then
-      species = trait
+    if not isTrait then
+      self.speciesRequested = marg
     end
   end
-  return species
+end
+function App:initStorage()
+  local path = config.registry.storageProvider
+  local filename = string.sub(path, 9) -- remove openbee/
+  os.loadAPI(path)
+  return _G[filename]['StorageProvider'](Creator, IStorage, config, logger)()
+end
+function App:initBreeder()
+  local path = config.registry.breederProvider
+  local filename = string.sub(path, 9) -- remove openbee/
+  os.loadAPI(path)
+  return _G[filename]['BreederProvider'](Creator, IStorage, config, logger)()
 end
 
---- Reading and writing config
-function loadFile(fileName)
-  local f = fs.open(fileName, "r")
-  if f ~= nil then
-    local data = f.readAll()
-    f.close()
+--- Breeder classes interface
+IBreeder = Creator()
+--- Initalizes breeder
+-- Stores wrapped peripheral in peripheral attribute
+-- @return IBreeder instance for chaining
+function IBreeder:_init()
+  return self
+end
+
+--- Storage classes interface
+IStorage = Creator()
+--- Initalizes storage
+-- Stores wrapped peripheral in peripheral attribute
+-- @return IStorage instance for chaining
+function IStorage:_init()
+  return self
+end
+--- Gets all and only bees from storage
+-- @return IStorage instance for chaining
+function IStorage:fetch()
+  return self
+end
+--- Returns all bess from storage
+function IStorage:getBees()
+  return IStorage:fetch().bees
+end
+--- Puts bee somewhere
+-- @param id ID for bee
+-- @param peripheralSide Side where to push
+-- @return IStorage instance for chaining
+function IStorage:putBee(id, peripheralSide)
+  return self
+end
+
+--- Item ids for bees
+ItemTypes = {
+  ['Forestry:beeDroneGE'] = {
+    ['isBee'] = true
+  },
+  ['Forestry:beePrincessGE'] = {
+    ['isBee'] = true
+  },
+  ['Forestry:beeQueenGE'] = {
+    ['isBee'] = true
+  },
+}
+
+--- Configuration class
+Config = Creator()
+function Config:_init(filename)
+  self.file = File(filename)
+  self.registry = self.file:read()
+  if self.registry == nil then
+    self.registry = configDefault
+    self.file:write(self.registry)
+  end
+  return self
+end
+
+--- Logging class
+Log = Creator()
+function Log:_init()
+  fs.makeDir('.openbee/logs')
+  local loglast = table.remove(natsort(fs.list('.openbee/logs')))
+  if loglast == nil then
+    self.lognum = 1
+  else
+    self.lognum = tonumber(string.sub(loglast, 5)) + 1
+  end
+  self.logname = 'log-' .. string.format("%03d", self.lognum)
+  self.logfile = File(self.logname)
+  self.logfile:open('w')
+end
+function Log:log(...)
+  self:debug(arg)
+  for _, marg in ipairs(arg) do
+    if type(marg) == "table" then
+      io.write(table.concat(marg, ' '))
+    else
+      io.write(marg)
+    end
+  end
+  return self
+end
+function Log:debug(...)
+  for _, marg in ipairs(arg) do
+    if type(marg) == "table" then
+      self.logfile:append(table.concat(marg, ' '))
+    else
+      self.logfile:append(marg)
+    end
+  end
+  return self
+end
+function Log:color(color)
+  term.setTextColor(color)
+  return self
+end
+
+--- File class
+File = Creator()
+function File:_init(filename)
+  self.filename = filename
+  return self
+end
+function File:open(mode)
+  self.file = fs.open(self.filename, mode)
+  return self
+end
+function File:read()
+  self:open('r')
+  if self.file ~= nil then
+    local data = self.file.readAll()
+    self:close()
     return textutils.unserialize(data)
   end
 end
-function saveFile(fileName, data)
-  local f = fs.open(fileName, "w")
-  f.write(textutils.serialize(data))
-  f.close()
+function File:write(data)
+  self:open('w').file.write(textutils.serialize(data))
+  self:close()
+end
+function File:append(data)
+  self.file.write(data)
+end
+function File:close()
+  self.file.close()
 end
 
---- Logging
-function debugTable(tArgs)
-  for _, msg in ipairs(tArgs) do
-    if msg then logFile.write(tostring(msg)) end
-    if _ > 1 then logFile.write(" ") end
-  end
-  logFile.flush()
-end
-function debug(...)
-  debugTable(arg)
-end
-function logTable(tArgs)
-  debugTable(tArgs)
-  for _, msg in ipairs(tArgs) do
-    if msg then io.write(msg) end
-    if _ > 1 then io.write(" ") end
-  end
-end
-function log(...)
-  logTable(arg)
-end
-function logLine(...) logTable(arg); log("\n") end
-function setupLog()
-  local logCount = 0
-  while fs.exists(string.format("bee.%d.log", logCount)) do logCount = logCount + 1 end
-  logFile = fs.open(string.format("bee.%d.log", logCount), "w")
-  logFileName = string.format("bee.%d.log", logCount)
+--- natsort
+function natsort(o)
+  local function padnum(d) return ("%012d"):format(d) end
+  table.sort(o, function(a,b)
+    return tostring(a):gsub("%d+",padnum) < tostring(b):gsub("%d+",padnum) end)
+  return o
 end
 
---- Run!
-local status, err = pcall(main, {...})
-if not status then
-  io.write(err.."\n")
-end
-io.write("Log file is "..logFileName.."\n")
+logger = Log()
+config = Config('.openbee/config')
+application = App(arg)
+application:parseArgs()
