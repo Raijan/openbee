@@ -1,5 +1,5 @@
 ------ Second_Fry's openbee AE2 fork (v2.0.0)
------- Original idea and code by Forte40 @ GitHub
+------ Original idea and code by Forte40 @ GitHub (forked at v2.2.1)
 --- Default configuration
 --- All sides are used for peripheral.wrap calls. Can be proxied (check OpenPeripheral Proxy).
 local configDefault = {
@@ -740,7 +740,7 @@ function App:_init(args)
   self.version = '2.0.0'
   logger:color(colors.green)
         :log('> Second_Fry\'s openbee AE2 fork (v' .. self.version .. ')\n')
-        :log('> Original idea and code by Forte40 @ GitHub (forked on v2.2.1)\n')
+        :log('> Thanks to Forte40 @ GitHub (forked on v2.2.1)\n')
         :color(colors.white)
 
   fs.makeDir('.openbee')
@@ -850,7 +850,7 @@ function Log:_init()
   else
     self.lognum = tonumber(string.sub(loglast, 5)) + 1
   end
-  self.logname = 'log-' .. string.format("%03d", self.lognum)
+  self.logname = '.openbee/logs/log-' .. string.format("%03d", self.lognum)
   self.logfile = File(self.logname)
   self.logfile:open('w')
 end
@@ -878,6 +878,11 @@ end
 function Log:color(color)
   term.setTextColor(color)
   return self
+end
+function Log:finish()
+  self:color(colors.green)
+      :log('> Successful finish (' .. self.logname .. ')\n')
+  self.logfile:close()
 end
 
 --- File class
@@ -921,3 +926,4 @@ logger = Log()
 config = Config('.openbee/config')
 application = App(arg)
 application:parseArgs()
+logger:finish()
