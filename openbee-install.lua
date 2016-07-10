@@ -3,31 +3,32 @@
 
 local branch = 'master'
 local url = 'https://raw.github.com/secondfry/openbee/' .. branch .. '/'
-local files = {'openbee-install.lua', 'openbee.lua', 'matron.lua', 'openbee/BreederApiary.lua', 'openbee/StorageAE.lua' }
+local filenames = {'openbee-install.lua', 'openbee.lua', 'matron.lua', 'openbee/BreederApiary.lua', 'openbee/StorageAE.lua' }
 local folders = {'openbee'}
 
-term.color(colors.green)
+term.setTextColor(colors.green)
 io.write('> Installing openbee\n')
-term.color(colors.white)
+term.setTextColor(colors.white)
 
 if not http then error('No access to web') end
 
-term.color(colors.lightBlue)
+term.setTextColor(colors.lightBlue)
 io.write('  Installing folders\n')
-term.color(colors.white)
+term.setTextColor(colors.white)
 for _, folder in ipairs(folders) do
   io.write('    ' .. folder .. '\n')
   fs.makeDir(folder)
 end
 
-term.color(colors.lightBlue)
+term.setTextColor(colors.lightBlue)
 io.write('  Installing files\n')
-term.color(colors.white)
-for _, file in ipairs(files) do
-  io.write('    ' .. file .. ': ')
-  local dataCurrent = ''
-  if fs.exists(file) then
-    local file = fs.open(file, "r")
+term.setTextColor(colors.white)
+for _, filename in ipairs(filenames) do
+  io.write('    ' .. filename .. ': ')
+
+  local data, dataCurrent = '', ''
+  if fs.exists(filename) then
+    local file = fs.open(filename, "r")
     dataCurrent = file.readAll()
     file.close()
     io.write('updating')
@@ -35,25 +36,34 @@ for _, file in ipairs(files) do
     io.write('installing')
   end
 
-  local request = http.get(url .. file)
+  local request = http.get(url .. filename)
+  if request == nil then error('  Request failed') end
   if request.getResponseCode() == 200 then
-    local data = request.readAll()
+    data = request.readAll()
+
     if data == dataCurrent then
-      term.color(colors.gray)
+      term.setTextColor(colors.gray)
       io.write(' same file\n')
-      term.color(colors.white)
+      term.setTextColor(colors.white)
     else
-      local file = fs.open(file, "w")
+      local file = fs.open(filename, "w")
       file.write(data)
       file.close()
-      term.color(colors.gray)
+      term.setTextColor(colors.gray)
       io.write(' success\n')
-      term.color(colors.white)
+      term.setTextColor(colors.white)
+
+      if filename == 'openbee-install.lua' then
+        term.setTextColor(colors.yellow)
+        io.write('  Install file updated, branching to new install\n')
+        term.setTextColor(colors.white)
+        return shell.run(filename)
+      end
     end
   else error('  Bad HTTP response code') end
   os.sleep(0.1)
 end
 
-term.color(colors.green)
+term.setTextColor(colors.green)
 io.write('> Installation successful\n')
-term.color(colors.white)
+term.setTextColor(colors.white)
