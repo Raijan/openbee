@@ -51,7 +51,7 @@ function BreederProvider(Creator, IBreeder, config, logger, ItemTypes)
     end
     for slot = 3, 9 do
       if items[slot] ~= nil then
-        if ItemTypes[items[slot].id].isBee then
+        if ItemTypes[items[slot].id] ~= nil and ItemTypes[items[slot].id].isBee then
           self.peripheral.pushItem(config.registry.storageDir, slot, 64)
         else
           self.peripheral.pushItem(config.registry.productDir, slot, 64)
