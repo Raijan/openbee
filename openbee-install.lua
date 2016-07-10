@@ -1,73 +1,59 @@
---- Second_Fry's openbee AE2 fork
---- Original code and idea by Forte40 @ GitHub
---- Hosted at http://pastebin.com/XxjND24H
+--- Second_Fry's openbee modular fork (v2.0.0)
+--- Original code and idea by Forte40 @ GitHub (forked at v2.2.1)
 
-if not http then
-  print("No access to web")
-  return
+local branch = 'master'
+local url = 'https://raw.github.com/secondfry/openbee/' .. branch .. '/'
+local files = {'openbee-install.lua', 'openbee.lua', 'matron.lua', 'openbee/BreederApiary.lua', 'openbee/StorageAE.lua' }
+local folders = {'openbee'}
+
+term.color(colors.green)
+io.write('> Installing openbee\n')
+term.color(colors.white)
+
+if not http then error('No access to web') end
+
+term.color(colors.lightBlue)
+io.write('  Installing folders\n')
+term.color(colors.white)
+for _, folder in ipairs(folders) do
+  io.write('    ' .. folder .. '\n')
+  fs.makeDir(folder)
 end
 
-local branch = "master"
-
-local files = {
-  {
-    name = "openbee-install",
-    url = "https://raw.github.com/secondfry/openbee/"..branch.."/openbee-install.lua"
-  },
-  {
-    name = "openbee",
-    url = "https://raw.github.com/secondfry/openbee/"..branch.."/openbee.lua"
-  },
-  {
-    name = "matron",
-    url = "https://raw.github.com/secondfry/openbee/"..branch.."/matron.lua"
-  }
-}
-
+term.color(colors.lightBlue)
+io.write('  Installing files\n')
+term.color(colors.white)
 for _, file in ipairs(files) do
-  local path
-  if file.folder then
-    if not fs.exists(file.folder) then
-      fs.makeDir(file.folder)
-    end
-    path = fs.combine(file.folder, file.name)
+  io.write('    ' .. file .. ': ')
+  local dataCurrent = ''
+  if fs.exists(file) then
+    local file = fs.open(file, "r")
+    dataCurrent = file.readAll()
+    file.close()
+    io.write('updating')
   else
-    path = file.name
+    io.write('installing')
   end
-  local currText = ""
-  if fs.exists(path) then
-    local f = fs.open(path, "r")
-    currText = f.readAll()
-    f.close()
-    io.write("update  ")
-  else
-    io.write("install ")
-  end
-  io.write("'"..file.name.."'"..string.rep(" ", math.max(0, 8 - #file.name)))
-  if file.folder then
-    io.write(" in '"..file.folder.."'"..string.rep(".", math.max(0, 8 - #file.folder)).."...")
-  else
-    io.write("    .............")
-  end
-  local request = http.get(file.url)
-  if request then
-    local response = request.getResponseCode()
-    if response == 200 then
-      local newText = request.readAll()
-      if newText == currText then
-        print("skip")
-      else
-        local f = fs.open(path, "w")
-        f.write(newText)
-        f.close()
-        print("done")
-      end
+
+  local request = http.get(url .. file)
+  if request.getResponseCode() == 200 then
+    local data = request.readAll()
+    if data == dataCurrent then
+      term.color(colors.gray)
+      io.write(' same file\n')
+      term.color(colors.white)
     else
-      print(" bad HTTP response code " .. response)
+      local file = fs.open(file, "w")
+      file.write(data)
+      file.close()
+      term.color(colors.gray)
+      io.write(' success\n')
+      term.color(colors.white)
     end
-  else
-    print(" no request handle")
-  end
+  else error('  Bad HTTP response code') end
   os.sleep(0.1)
 end
-print("Finished")
+
+term.color(colors.green)
+io.write('> Installation successful\n')
+term.color(colors.white)
