@@ -5,6 +5,10 @@
 local configDefault = {
   ['storageProvider'] = 'openbee/StorageAE.lua', -- allows different storage backends
   ['breederProvider'] = 'openbee/BreederApiary.lua', -- allows different breeder backends
+  ["analyzerDir"] = "west", -- direction from storage to analyzer
+  ["storageDir"] = "south", -- direction from breeder to storage
+  ["productDir"] = "down", -- direction from breeder to product storage
+  ["breederDir"] = "north", -- direction from storage to breeder
 
   -- StorageAE block
   ['AE2MEInterfaceProbe'] = true, -- automatic probe for AE2 ME Interface
@@ -31,79 +35,19 @@ local configDefault = {
     "territory"
   },
 
-  -- Old shit, plz remove
-  ["apiaryDir"] = "down", -- direction from interface to apiary
-  ["interfaceDir"] = "up", -- direction from apiary to interface
-  ["productDir"] = "down", -- direction from apiary to throw bee products in
-  ["analyzerDir"] = "east", -- direction from AE wrapped peripheral to analyze bees
+  -- FIXME old stuff, rewrite and remove
   ["ignoreSpecies"] = {
     "Leporine"
   },
   ["useAnalyzer"] = true,
   ["useReferenceBees"] = true -- try to keep 1 pure princess and 1 pure drone
-
 }
 
---- Global variables
-local catalog = {} -- catalog is really a catalog. Check catalogBees
-catalog.princesses = {}
-catalog.princessesBySpecies = {}
-catalog.drones = {}
-catalog.dronesBySpecies = {}
-catalog.queens = {}
-catalog.referenceDronesBySpecies = {}
-catalog.referencePrincessesBySpecies = {}
-catalog.referencePairBySpecies = {}
-
---- Main program cycle
-function main(tArgs)
-  -- Header
-  term.setTextColor(colors.green)
-  log(" > Second_Fry's openbee AE2 fork")
-  log(string.format(" (v%d.%d.%d)\n", version.major, version.minor, version.patch))
-  logLine(" > Original idea and code by Forte40 @ GitHub")
-  term.setTextColor(colors.white)
-  -- Argument list
-  debug("  Got arguments: ")
-  debugTable(tArgs)
-  debug("\n")
-  -- Priority list result
-  debug("  Priority list: ")
-  debugTable(traitPriority)
-  debug("\n")
-  -- Last bits of initialization in local scope
-  local interface, apiary = getPeripherals()
-  local mutations, beeNames = buildMutationGraph(apiary)
-  local scorers = buildScoring()
-  debug("  Initial clearing: apiary\n")
-  clearApiary(interface, apiary)
-  debug("  Initial clearing: analyzer\n")
-  clearAnalyzer(interface)
-  log("  Initial catalog\n")
-  local catalog = catalogBees(interface, scorers)
-  if #catalog.queens > 0 then log("  Using all queens\n") end
-  while #catalog.queens > 0 do
-    breedQueen(interface, apiary, catalog.queens[1])
-    catalog = catalogBees(interface, scorers)
-  end
-  if targetSpecies ~= nil then
-    targetSpecies = tArgs[1]:sub(1,1):upper()..tArgs[1]:sub(2):lower()
-    if beeNames[targetSpecies] == true then
-      breedTargetSpecies(mutations, interface, apiary, scorers, targetSpecies)
-    else
-      log("  Species "..targetSpecies.." is not found\n")
-    end
-  else
-    while true do
-      breedAllSpecies(mutations, interface, apiary, scorers, buildTargetSpeciesList(catalog, apiary))
-      catalog = catalogBees(interface, scorers)
-    end
-  end
-end
-
 --- Forte40 code with rewrites
+-- All comments in this block below are original
+Forte40 = {}
 -- utility functions ------------------
-function choose(list1, list2)
+function Forte40.choose(list1, list2)
   local newList = {}
   if list2 then
     for i = 1, #list2 do
@@ -124,58 +68,49 @@ function choose(list1, list2)
   end
   return newList
 end
-
+Forte40.nameFix = {}
 -- fix for some versions returning bees.species.*
-local nameFix = {}
-function fixName(name)
+function Forte40.fixName(name)
   if type(name) == "table" then
     name = name.name
   end
   local newName = name:gsub("bees%.species%.",""):gsub("^.", string.upper)
   if name ~= newName then
-    nameFix[newName] = name
+    Forte40.nameFix[newName] = name
   end
   return newName
 end
-
-function fixBee(bee)
+function Forte40.fixBee(bee)
   if bee.individual ~= nil then
-    bee.individual.displayName = fixName(bee.individual.displayName)
+    bee.individual.displayName = Forte40.fixName(bee.individual.displayName)
     if bee.individual.isAnalyzed then
-      bee.individual.active.species.name = fixName(bee.individual.active.species.name)
-      bee.individual.inactive.species.name = fixName(bee.individual.inactive.species.name)
+      bee.individual.active.species.name = Forte40.fixName(bee.individual.active.species.name)
+      bee.individual.inactive.species.name = Forte40.fixName(bee.individual.inactive.species.name)
     end
   end
   return bee
 end
-
-function fixParents(parents)
-  parents.allele1 = fixName(parents.allele1)
-  parents.allele2 = fixName(parents.allele2)
+function Forte40.fixParents(parents)
+  parents.allele1 = Forte40.fixName(parents.allele1)
+  parents.allele2 = Forte40.fixName(parents.allele2)
   if parents.result then
-    parents.result = fixName(parents.result)
+    parents.result = Forte40.fixName(parents.result)
   end
   return parents
 end
-
-function beeName(bee)
+function Forte40.beeName(bee)
   if bee.individual.active then
     return bee.individual.active.species.name:sub(1,3) .. "-" ..
-            bee.individual.inactive.species.name:sub(1,3)
+        bee.individual.inactive.species.name:sub(1,3)
   else
     return bee.individual.displayName:sub(1,3)
   end
 end
-
 -- mutations and scoring --------------
 -- build mutation graph
-function buildMutationGraph(apiary)
+function Forte40.buildMutationGraph(apiary)
   local mutations = {}
-  local beeNames = {}
-  function addMutateTo(parent1, parent2, offspring, chance)
-    beeNames[parent1] = true
-    beeNames[parent2] = true
-    beeNames[offspring] = true
+  function Forte40.addMutateTo(parent1, parent2, offspring, chance)
     if mutations[parent1] ~= nil then
       if mutations[parent1].mutateTo[offspring] ~= nil then
         mutations[parent1].mutateTo[offspring][parent2] = chance
@@ -189,48 +124,39 @@ function buildMutationGraph(apiary)
     end
   end
   for _, parents in pairs(apiary.getBeeBreedingData()) do
-    fixParents(parents)
-    addMutateTo(parents.allele1, parents.allele2, parents.result, parents.chance)
-    addMutateTo(parents.allele2, parents.allele1, parents.result, parents.chance)
+    Forte40.fixParents(parents)
+    Forte40.addMutateTo(parents.allele1, parents.allele2, parents.result, parents.chance)
+    Forte40.addMutateTo(parents.allele2, parents.allele1, parents.result, parents.chance)
   end
   mutations.getBeeParents = function(name)
-    return apiary.getBeeParents((nameFix[name] or name))
+    return apiary.getBeeParents((Forte40.nameFix[name] or name))
   end
-  return mutations, beeNames
+  return mutations
 end
-
-function buildTargetSpeciesList(catalog, apiary)
+function Forte40.buildTargetSpeciesList(catalog, apiary)
   local targetSpeciesList = {}
-  local parentss = apiary.getBeeBreedingData()
+  local parentss = apiary.peripheral.getBeeBreedingData()
   for _, parents in pairs(parentss) do
     local skip = false
-    for i, ignoreSpecies in ipairs(config.ignoreSpecies) do
+    for i, ignoreSpecies in ipairs(config.registry.ignoreSpecies) do
       if parents.result == ignoreSpecies then
         skip = true
         break
       end
     end
     if not skip and
-            ( -- skip if reference pair exists
-            catalog.referencePrincessesBySpecies[parents.result] == nil or
-                    catalog.referenceDronesBySpecies[parents.result] == nil
-            ) and
-            ( -- princess 1 and drone 2 available
-            catalog.princessesBySpecies[parents.allele1] ~= nil and
-                    catalog.dronesBySpecies[parents.allele2] ~= nil
-            ) or
-            ( -- princess 2 and drone 1 available
-            catalog.princessesBySpecies[parents.allele2] ~= nil and
-                    catalog.dronesBySpecies[parents.allele1] ~= nil
-            ) then
+        (catalog.reference[parents.result] == nil or catalog.reference[parents.result].pair == nil) and  -- skip if reference pair exists
+        catalog.reference[parents.allele1] ~= nil and catalog.reference[parents.allele2] ~= nil and
+        ((catalog.reference[parents.allele1].princess ~= nil and catalog.reference[parents.allele2].drone ~= nil) or -- princess 1 and drone 2 available
+        (catalog.reference[parents.allele2].princess ~= nil and catalog.reference[parents.allele1].drone ~= nil)) -- princess 2 and drone 1 available
+    then
       table.insert(targetSpeciesList, parents.result)
     end
   end
   return targetSpeciesList
 end
-
 -- percent chance of 2 species turning into a target species
-function mutateSpeciesChance(mutations, species1, species2, targetSpecies)
+function Forte40.mutateSpeciesChance(mutations, species1, species2, targetSpecies)
   local chance = {}
   if species1 == species2 then
     chance[species1] = 100
@@ -250,24 +176,22 @@ function mutateSpeciesChance(mutations, species1, species2, targetSpecies)
   end
   return chance[targetSpecies] or 0.0
 end
-
 -- percent chance of 2 bees turning into target species
-function mutateBeeChance(mutations, princess, drone, targetSpecies)
+function Forte40.mutateBeeChance(mutations, princess, drone, targetSpecies)
   if princess.individual.isAnalyzed then
     if drone.individual.isAnalyzed then
-      return (mutateSpeciesChance(mutations, princess.individual.active.species.name, drone.individual.active.species.name, targetSpecies) / 4
-              +mutateSpeciesChance(mutations, princess.individual.inactive.species.name, drone.individual.active.species.name, targetSpecies) / 4
-              +mutateSpeciesChance(mutations, princess.individual.active.species.name, drone.individual.inactive.species.name, targetSpecies) / 4
-              +mutateSpeciesChance(mutations, princess.individual.inactive.species.name, drone.individual.inactive.species.name, targetSpecies) / 4)
+      return (Forte40.mutateSpeciesChance(mutations, princess.individual.active.species.name, drone.individual.active.species.name, targetSpecies) / 4
+          +Forte40.mutateSpeciesChance(mutations, princess.individual.inactive.species.name, drone.individual.active.species.name, targetSpecies) / 4
+          +Forte40.mutateSpeciesChance(mutations, princess.individual.active.species.name, drone.individual.inactive.species.name, targetSpecies) / 4
+          +Forte40.mutateSpeciesChance(mutations, princess.individual.inactive.species.name, drone.individual.inactive.species.name, targetSpecies) / 4)
     end
   elseif drone.individual.isAnalyzed then
   else
-    return mutateSpeciesChance(princess.individual.displayName, drone.individual.displayName, targetSpecies)
+    return Forte40.mutateSpeciesChance(princess.individual.displayName, drone.individual.displayName, targetSpecies)
   end
 end
-
-function buildScoring()
-  function makeNumberScorer(trait, default)
+function Forte40.buildScoring()
+  local function makeNumberScorer(trait, default)
     local function scorer(bee)
       if bee.individual.isAnalyzed then
         return (bee.individual.active[trait] + bee.individual.inactive[trait]) / 2
@@ -278,7 +202,7 @@ function buildScoring()
     return scorer
   end
 
-  function makeBooleanScorer(trait)
+  local function makeBooleanScorer(trait)
     local function scorer(bee)
       if bee.individual.isAnalyzed then
         return ((bee.individual.active[trait] and 1 or 0) + (bee.individual.inactive[trait] and 1 or 0)) / 2
@@ -289,7 +213,7 @@ function buildScoring()
     return scorer
   end
 
-  function makeTableScorer(trait, default, lookup)
+  local function makeTableScorer(trait, default, lookup)
     local function scorer(bee)
       if bee.individual.isAnalyzed then
         return ((lookup[bee.individual.active[trait]] or default) + (lookup[bee.individual.inactive[trait]] or default)) / 2
@@ -344,187 +268,57 @@ function buildScoring()
     ["territory"] = function(bee)
       if bee.individual.isAnalyzed then
         return ((bee.individual.active.territory[1] * bee.individual.active.territory[2] * bee.individual.active.territory[3]) +
-                (bee.individual.inactive.territory[1] * bee.individual.inactive.territory[2] * bee.individual.inactive.territory[3])) / 2
+            (bee.individual.inactive.territory[1] * bee.individual.inactive.territory[2] * bee.individual.inactive.territory[3])) / 2
       else
         return 0
       end
     end
   }
 end
-
-function compareBees(scorers, a, b)
-  for _, trait in ipairs(traitPriority) do
-    local scorer = scorers[trait]
-    if scorer ~= nil then
-      local aScore = scorer(a)
-      local bScore = scorer(b)
-      if aScore ~= bScore then
-        return aScore > bScore
-      end
-    end
-  end
-  return true
-end
-
-function compareMates(a, b)
-  for i, trait in ipairs(traitPriority) do
+function Forte40.compareMates(a, b)
+  for i, trait in ipairs(config.registry.traitPriority) do
     if a[trait] ~= b[trait] then
       return a[trait] > b[trait]
     end
   end
   return true
 end
-
-function betterTraits(scorers, a, b)
-  local traits = {}
-  for _, trait in ipairs(traitPriority) do
-    local scorer = scorers[trait]
-    if scorer ~= nil then
-      local aScore = scorer(a)
-      local bScore = scorer(b)
-      if bScore > aScore then
-        table.insert(traits, trait)
-      end
-    end
-  end
-  return traits
-end
-
--- interaction functions --------------
-
-function clearApiary(interface, apiary)
-  local bees = apiary.getAllStacks(false)
-  -- wait for queen to die
-  if (bees[1] ~= nil and bees[1].raw_name == "item.for.beequeenge")
-          or (bees[1] ~= nil and bees[2] ~= nil) then
-    log("  Waiting for apiary")
-    while true do
-      sleep(5)
-      bees = apiary.getAllStacks(false)
-      if bees[1] == nil then
-        break
-      end
-      log(".")
-    end
-    log("\n")
-  end
-  for slot = 3, 9 do
-    local bee = bees[slot]
-    if bee ~= nil then
-      if bee.raw_name == "item.for.beedronege" or bee.raw_name == "item.for.beeprincessge" then
-        apiary.pushItem(config.interfaceDir, slot, 64)
-      else
-        apiary.pushItem(config.productDir, slot, 64)
-      end
-    end
-  end
-end
-
-function clearAnalyzer(interface)
-  if not config.useAnalyzer then
-    return
-  end
-  for analyzerSlot = 9, 12 do
-    if interface.pullItem(config.analyzerDir, analyzerSlot) == 0 then
-      break
-    end
-  end
-end
-
-function analyzeBee(interface, item)
-  clearAnalyzer(interface)
-  logLine("    Analyzing "..item.item.display_name)
-  if not interface.canExport(config.analyzerDir) then
-    log("  ! Analyzer not found, disabling usage\n")
-    config.useAnalyzer = false
-  end
-  interface.exportItem(item.fingerprint, config.analyzerDir, 64, 3)
-  while true do
-    if interface.pullItem(config.analyzerDir, 9) > 0 then
-      break
-    end
-    sleep(5)
-  end
-end
-
-function breedBees(interface, apiary, princess, drone)
-  clearApiary(interface, apiary)
-  interface.exportItem(princess.fingerprint, config.apiaryDir, 1, 1)
-  interface.exportItem(drone.fingerprint, config.apiaryDir, 1, 2)
-  clearApiary(interface, apiary)
-end
-
-function breedQueen(interface, apiary, queen)
-  log("    Breeding "..queen.item.display_name.."\n")
-  clearApiary(interface, apiary)
-  interface.exportItem(queen.fingerprint, config.apiaryDir, 1, 1)
-  clearApiary(interface, apiary)
-end
-
-
-
-
-
-function breedAllSpecies(mutations, interface, apiary, scorers, speciesList)
+function Forte40.breedAllSpecies(mutations, interface, apiary, scorers, speciesList)
   if #speciesList == 0 then
-    log("Please add more bee species and press [Enter]")
+    logger:log('< Forte40: Please add more bee species and press [Enter]')
     io.read("*l")
   else
     for i, targetSpecies in ipairs(speciesList) do
-      breedTargetSpecies(mutations, interface, apiary, scorers, targetSpecies)
+      Forte40.breedTargetSpecies(mutations, interface, apiary, scorers, targetSpecies)
     end
   end
 end
-
-function breedTargetSpecies(mutations, interface, apiary, scorers, targetSpecies)
-  logLine("  Going for "..targetSpecies)
-  local catalog = catalogBees(interface, scorers)
-  while true do
-    if #catalog.princesses == 0 then
-      log("Please add more princesses and press [Enter]")
-      io.read("*l")
-      catalog = catalogBees(interface, scorers)
-    elseif #catalog.drones == 0 and next(catalog.referenceDronesBySpecies) == nil then
-      log("Please add more drones and press [Enter]")
-      io.read("*l")
-      catalog = catalogBees(interface, scorers)
-    else
-      local mates = selectPair(mutations, scorers, catalog, targetSpecies)
-      if mates ~= nil then
-        if isPureBred(mates.princess.item, mates.drone.item, targetSpecies) then
-          break
-        else
-          breedBees(interface, apiary, mates.princess, mates.drone)
-          catalog = catalogBees(interface, scorers)
-        end
-      else
-        log(string.format("Please add more bee species for %s and press [Enter]"), targetSpecies)
-        io.read("*l")
-        catalog = catalogBees(interface, scorers)
-      end
-    end
-  end
-  log("  "..targetSpecies.." is purebred\n")
+function Forte40.breedBees(interface, apiary, princess, drone)
+  apiary:clear()
+  interface:putBee(princess.id, config.registry.breederDir, 1, 1)
+  interface:putBee(drone.id, config.registry.breederDir, 1, 2)
+  apiary:clear()
 end
-
 -- selects best pair for target species
 --   or initiates breeding of lower species
-function selectPair(mutations, scorers, catalog, targetSpecies)
-  logLine("    Targetting "..targetSpecies)
+function Forte40.selectPair(mutations, scorers, catalog, targetSpecies)
+  logger:color(colors.gray):log('  Forte40: -> ' .. targetSpecies .. '\n'):color(colors.white)
   local baseChance = 0
   if #mutations.getBeeParents(targetSpecies) > 0 then
     local parents = mutations.getBeeParents(targetSpecies)[1]
     baseChance = parents.chance
-    for _, s in ipairs(parents.specialConditions) do
-      logLine("    ", s)
+    if table.getn(parents.specialConditions) > 0 then
+      logger:log('  Forte40: special conditions:\n' .. table.concat(parents.specialConditions, '\n') .. '\n')
     end
   end
-  local mateCombos = choose(catalog.princesses, catalog.drones)
+  local mateCombos = Forte40.choose(catalog.princesses, catalog.drones)
   local mates = {}
-  local haveReference = (catalog.referencePrincessesBySpecies[targetSpecies] ~= nil and
-          catalog.referenceDronesBySpecies[targetSpecies] ~= nil)
+  local haveReference =
+    catalog.reference[targetSpecies] ~= nil and
+    catalog.reference[targetSpecies].princess ~= nil and
+    catalog.reference[targetSpecies].drone ~= nil
   for i, v in ipairs(mateCombos) do
-    local chance = mutateBeeChance(mutations, v[1].item, v[2].item, targetSpecies) or 0
+    local chance = Forte40.mutateBeeChance(mutations, v[1], v[2], targetSpecies) or 0
     if (not haveReference and chance >= baseChance / 2) or
             (haveReference and chance > 25) then
       local newMates = {
@@ -533,25 +327,49 @@ function selectPair(mutations, scorers, catalog, targetSpecies)
         ["speciesChance"] = chance
       }
       for trait, scorer in pairs(scorers) do
-        newMates[trait] = (scorer(v[1].item) + scorer(v[2].item)) / 2
+        newMates[trait] = (scorer(v[1]) + scorer(v[2])) / 2
       end
       table.insert(mates, newMates)
     end
   end
   if #mates > 0 then
-    table.sort(mates, compareMates)
-    for i = math.min(#mates, 10), 1, -1 do
+    table.sort(mates, Forte40.compareMates)
+    for i = math.min(#mates, 5), 2, -1 do
       local parents = mates[i]
-      debug(beeName(parents.princess.item), " ", beeName(parents.drone.item), " ", parents.speciesChance, " ", parents.fertility, " ",
-        parents.flowering, " ", parents.nocturnal, " ", parents.tolerantFlyer, " ", parents.caveDwelling, " ",
-        parents.lifespan, " ", parents.temperatureTolerance, " ", parents.humidityTolerance)
+      logger:debug('  Forte40: ' ..
+              Forte40.beeName(parents.princess) .. ' ' ..
+              Forte40.beeName(parents.drone) .. ' ' ..
+              parents.speciesChance .. ' ' ..
+              parents.fertility .. ' ' ..
+              parents.flowering .. ' ' ..
+              parents.nocturnal .. ' ' ..
+              parents.tolerantFlyer .. ' ' ..
+              parents.caveDwelling .. ' ' ..
+              parents.lifespan .. ' ' ..
+              parents.temperatureTolerance .. ' ' ..
+              parents.humidityTolerance .. '\n')
     end
+    local parents = mates[1]
+    logger:log('  Forte40: best combination:\n' ..
+            Forte40.beeName(parents.princess) .. ' ' ..
+            Forte40.beeName(parents.drone) .. ' ' ..
+            parents.speciesChance .. ' ' ..
+            parents.fertility .. ' ' ..
+            parents.flowering .. ' ' ..
+            parents.nocturnal .. ' ' ..
+            parents.tolerantFlyer .. ' ' ..
+            parents.caveDwelling .. ' ' ..
+            parents.lifespan .. ' ' ..
+            parents.temperatureTolerance .. ' ' ..
+            parents.humidityTolerance .. '\n')
     return mates[1]
   else
     -- check for reference bees and breed if drone count is 1
-    if catalog.referencePrincessesBySpecies[targetSpecies] ~= nil and
-            catalog.referenceDronesBySpecies[targetSpecies] ~= nil then
-      log("      Breeding extra drone from reference bees\n")
+    if catalog.reference[targetSpecies] ~= nil and
+       catalog.reference[targetSpecies].princess ~= nil and
+       catalog.reference[targetSpecies].drone ~= nil
+    then
+      logger:log('  Forte40: Breeding extra drone from reference bees\n')
       return {
         ["princess"] = catalog.referencePrincessesBySpecies[targetSpecies],
         ["drone"] = catalog.referenceDronesBySpecies[targetSpecies]
@@ -560,28 +378,29 @@ function selectPair(mutations, scorers, catalog, targetSpecies)
     -- attempt lower tier bee
     local parentss = mutations.getBeeParents(targetSpecies)
     if #parentss > 0 then
-      log("      Lower tier\n")
       table.sort(parentss, function(a, b) return a.chance > b.chance end)
       local trySpecies = {}
       for i, parents in ipairs(parentss) do
-        fixParents(parents)
-        if (catalog.referencePairBySpecies[parents.allele2] == nil        -- no reference bee pair
-                or table.getn(catalog.referenceDronesBySpecies[parents.allele2]) < 2 -- no extra reference drone
-                or catalog.princessesBySpecies[parents.allele2] == nil)       -- no converted princess
-                and trySpecies[parents.allele2] == nil then
+        Forte40.fixParents(parents)
+        if (catalog.reference[parents.allele2] == nil or
+            catalog.reference[parents.allele2].pair == nil or -- no reference bee pair
+            catalog.reference[parents.allele2].droneCount < 2 or -- no extra reference drone
+            catalog.reference[parents.allele2].princess == nil) -- no converted princess
+            and trySpecies[parents.allele2] == nil then
           table.insert(trySpecies, parents.allele2)
           trySpecies[parents.allele2] = true
         end
-        if (catalog.referencePairBySpecies[parents.allele1] == nil
-                or table.getn(catalog.referenceDronesBySpecies[parents.allele1]) < 2
-                or catalog.princessesBySpecies[parents.allele1] == nil)
-                and trySpecies[parents.allele1] == nil then
+        if (catalog.reference[parents.allele1] == nil or
+            catalog.reference[parents.allele1].pair == nil or -- no reference bee pair
+            catalog.reference[parents.allele1].droneCount < 2 or -- no extra reference drone
+            catalog.reference[parents.allele1].princess == nil) -- no converted princess
+            and trySpecies[parents.allele1] == nil then
           table.insert(trySpecies, parents.allele1)
           trySpecies[parents.allele1] = true
         end
       end
       for _, species in ipairs(trySpecies) do
-        local mates = selectPair(mutations, scorers, catalog, species)
+        local mates = Forte40.selectPair(mutations, scorers, catalog, species)
         if mates ~= nil then
           return mates
         end
@@ -590,8 +409,7 @@ function selectPair(mutations, scorers, catalog, targetSpecies)
     return nil
   end
 end
-
-function isPureBred(bee1, bee2, targetSpecies)
+function Forte40.isPureBred(bee1, bee2, targetSpecies)
   if bee1.individual.isAnalyzed and bee2.individual.isAnalyzed then
     if bee1.individual.active.species.name == bee1.individual.inactive.species.name and
             bee2.individual.active.species.name == bee2.individual.inactive.species.name and
@@ -606,98 +424,40 @@ function isPureBred(bee1, bee2, targetSpecies)
   end
   return false
 end
-
---- Catalog block
-function catalogBees(interface, scorers)
-  -- Clear catalog
-  catalog = {}
-  catalog.princesses = {}
-  catalog.princessesBySpecies = {}
-  catalog.drones = {}
-  catalog.dronesBySpecies = {}
-  catalog.queens = {}
-  catalog.referenceDronesBySpecies = {}
-  catalog.referencePrincessesBySpecies = {}
-  catalog.referencePairBySpecies = {}
-  -- Analyze bees
-  debug("    Analyzing bees\n")
-  if config.useAnalyzer == true then
-    local analyzeCount = 0
-    local stillAnalyzing = true
-    while stillAnalyzing do
-      local items = getAllBees(interface)
-      local analyzeCountLocal = 0
-      for _, item in ipairs(items) do
-        if not item.item.individual.isAnalyzed then
-          analyzeBee(interface, item)
-          analyzeCountLocal = analyzeCountLocal + 1
+function Forte40.breedTargetSpecies(mutations, inv, apiary, scorers, targetSpecies)
+  while true do
+    if application.catalog.princessesCount == 0 then
+      logger:color(colors.yellow)
+            :log('< Forte40: Please add more princesses and press [Enter]')
+            :color(colors.white)
+      io.read("*l")
+      application.catalog:run(application.storage)
+    elseif application.catalog.dronesCount == 0 then
+      logger:color(colors.yellow)
+            :log('< Forte40: Please add more drones and press [Enter]')
+            :color(colors.white)
+      io.read("*l")
+      application.catalog:run(application.storage)
+    else
+      logger:log('  Forte40: targetting ' .. targetSpecies .. '\n')
+      local mates = Forte40.selectPair(mutations, scorers, application.catalog:toForte40(), targetSpecies)
+      if mates ~= nil then
+        if Forte40.isPureBred(mates.princess, mates.drone, targetSpecies) then
+          break
+        else
+          Forte40.breedBees(inv, apiary, mates.princess, mates.drone)
+          application.catalog:run(application.storage)
         end
-      end
-      if analyzeCountLocal == 0 then stillAnalyzing = false else analyzeCount = analyzeCount + analyzeCountLocal end
-    end
-    if analyzeCount > 0 then log("    Analyzed "..analyzeCount.." new bees\n") end
-  end
-  -- Marking references
-  debug("    Marking refences\n")
-  local items = getAllBees(interface)
-  if config.useReferenceBees then
-    for _, item in ipairs(items) do
-      local species = item.item.individual.active.species.name
-      if item.item.raw_name == "item.for.beedronege" then -- drones
-        if catalog.referenceDronesBySpecies[species] == nil then
-          catalog.referenceDronesBySpecies[species] = {}
-        end
-        table.insert(catalog.referenceDronesBySpecies[species], item)
-      elseif item.item.raw_name == "item.for.beeprincessge" then -- princess
-        if catalog.referencePrincessesBySpecies[species] == nil then
-          catalog.referencePrincessesBySpecies[species] = {}
-        end
-        table.insert(catalog.referencePrincessesBySpecies[species], item)
-      end
-      if catalog.referencePrincessesBySpecies[species] ~= nil and catalog.referenceDronesBySpecies[species] ~= nil then
-        catalog.referencePairBySpecies[species] = true
+      else
+        logger:color(colors.yellow)
+              :log('< Forte40: Please add more bee species for ' .. targetSpecies .. ' and press [Enter]')
+              :color(colors.white)
+        io.read("*l")
+        application.catalog:run(application.storage)
       end
     end
-    log("    Have reference for: ")
-    for species, _ in pairs(catalog.referencePairBySpecies) do log(species..", ") end
-    log("\n")
   end
-  -- Creating actual breeding catalog
-  for _, item in ipairs(items) do
-    local bee = item.item
-    local species = item.item.individual.active.species.name
-    if bee.raw_name == "item.for.beedronege" and table.getn(catalog.referenceDronesBySpecies[species]) > 1 then
-      table.insert(catalog.drones, item)
-      addBySpecies(catalog.dronesBySpecies, item)
-    elseif bee.raw_name == "item.for.beeprincessge" and table.getn(catalog.referencePrincessesBySpecies[species]) > 1 then
-      table.insert(catalog.princesses, item)
-      addBySpecies(catalog.princessesBySpecies, item)
-    elseif bee.id == 13339 then -- queens
-      table.insert(catalog.queens, item)
-    end
-  end
-  log("    Usable "..#catalog.queens.." queens, "..#catalog.princesses.." princesses, "..#catalog.drones.." drones\n")
-  return catalog
-end
-function addBySpecies(beesBySpecies, item)
-  local bee = item.item
-  if bee.individual.isAnalyzed then
-    if beesBySpecies[bee.individual.active.species.name] == nil then
-      beesBySpecies[bee.individual.active.species.name] = {}
-    end
-    table.insert(beesBySpecies[bee.individual.active.species.name], item)
-    if bee.individual.inactive.species.name ~= bee.individual.active.species.name then
-      if beesBySpecies[bee.individual.inactive.species.name] == nil then
-        beesBySpecies[bee.individual.inactive.species.name] = {}
-      end
-      table.insert(beesBySpecies[bee.individual.inactive.species.name], item)
-    end
-  else
-    if beesBySpecies[bee.individual.displayName] == nil then
-      beesBySpecies[bee.individual.displayName] = {}
-    end
-    table.insert(beesBySpecies[bee.individual.displayName], item)
-  end
+  logger:log('< Forte40: Bees are purebred\n')
 end
 
 --- Create table-based classes
@@ -741,19 +501,23 @@ function App:_init(args)
   logger:color(colors.green)
         :log('> Second_Fry\'s openbee AE2 fork (v' .. self.version .. ')\n')
         :log('> Thanks to Forte40 @ GitHub (forked on v2.2.1)\n')
+        :color(colors.gray)
+        :log('  Got arguments: ' .. table.concat(args, ', ') .. '\n')
         :color(colors.white)
-
   fs.makeDir('.openbee')
   self.args = args or {}
   self.storage = self:initStorage()
   self.breeder = self:initBreeder()
   self.traitPriority = config.registry.traitPriority
+  self:initMutationGraph()
+  self.catalog = Catalog()
 end
 --- Iterates over requested species and traits and setups priorities
 function App:parseArgs()
   local priority = 1
   local isTrait = false
   for _, marg in ipairs(self.args) do
+    isTrait = false
     for priorityConfig = 1, #self.traitPriority do
       if marg == self.traitPriority[priorityConfig] then
         isTrait = true
@@ -772,13 +536,265 @@ function App:initStorage()
   local path = config.registry.storageProvider
   local filename = string.sub(path, 9) -- remove openbee/
   os.loadAPI(path)
-  return _G[filename]['StorageProvider'](Creator, IStorage, config, logger)()
+  return _G[filename]['StorageProvider'](Creator, IStorage, config, logger, ItemTypes)()
 end
 function App:initBreeder()
   local path = config.registry.breederProvider
   local filename = string.sub(path, 9) -- remove openbee/
   os.loadAPI(path)
-  return _G[filename]['BreederProvider'](Creator, IStorage, config, logger)()
+  return _G[filename]['BreederProvider'](Creator, IStorage, config, logger, ItemTypes)()
+end
+function App:initMutationGraph()
+  self.beeGraph = {}
+  local beeGraph = self.breeder.peripheral.getBeeBreedingData()
+  for _, mutation in ipairs(beeGraph) do
+    if self.beeGraph[mutation.result] == nil then self.beeGraph[mutation.result] = {} end
+    table.insert(self.beeGraph[mutation.result], mutation)
+  end
+  for _, species in ipairs(self.breeder.peripheral.listAllSpecies()) do
+    BeeTypes[species.name] = true
+  end
+end
+function App:analyzerClear()
+  local beeID, beeTest, beeRet
+  local residentSleeperTime = 0
+  if not config.registry.useAnalyzer then return end
+  self.storage:fetch()
+  logger:log('    Analyzer: checking')
+  while true do
+    for slot = 9, 12 do self.storage.peripheral.pullItem(config.registry.analyzerDir, slot) end
+    -- Check if Analyzer was operating
+    -- This is not a cycle, runs once
+    for id, bee in pairs(self.storage.bees) do
+      if bee.individual.isAnalyzed then
+        beeTest = bee
+        beeID = id
+      end
+      break
+    end
+    if beeTest == nil then break else
+      self.storage:putBee(beeID, config.registry.analyzerDir, 1, 6)
+      sleep(1)
+      residentSleeperTime = residentSleeperTime + 1
+      beeRet = self.storage.peripheral.pullItem(config.registry.analyzerDir, 9)
+      if beeRet > 0 then break else
+        logger:clearLine():log('    Analyzer: waiting (' .. residentSleeperTime .. ' seconds)')
+        sleep(5) -- Analyzer tick is 30 seconds
+        residentSleeperTime = residentSleeperTime + 5
+      end
+    end
+  end
+  logger:clearLine():log('    Analyzer: done waiting (was ' .. residentSleeperTime .. ' seconds)\n')
+end
+function App:main()
+  local doRestart = false
+  logger:color(colors.lightBlue)
+        :log('  Initial: clearing breeder\n')
+        :color(colors.white)
+  self.breeder:clear()
+  logger:color(colors.lightBlue)
+        :log('  Initial: clearing analyzer\n')
+        :color(colors.white)
+  self:analyzerClear()
+  logger:color(colors.lightBlue)
+        :log('  Initial: categorizing bees\n')
+        :color(colors.white)
+  self.catalog:run(self.storage)
+  while self.catalog.queens ~= nil do
+    logger:color(colors.lightBlue)
+          :log('  Initial: clearing queens\n')
+          :color(colors.white)
+    for id, bee in pairs(self.catalog.queens) do
+      self.storage:putBee(id, config.registry.breederDir)
+      self.breeder:clear()
+    end
+    self.catalog:run(self.storage)
+  end
+  if self.speciesRequested ~= nil then
+    self.speciesTarget = self.speciesRequested:sub(1,1):upper() .. self.speciesRequested:sub(2):lower()
+    if BeeTypes[self.speciesTarget] ~= true then
+      logger:color(colors.red)
+            :log('! Species ' .. self.speciesTarget .. ' is not found!\n')
+            :color(colors.white)
+      return
+    end
+    Forte40.breedTargetSpecies(Forte40.buildMutationGraph(self.breeder.peripheral), self.storage, self.breeder, Forte40.buildScoring(), self.speciesTarget)
+    -- FIXME use self:breedSpecies(self.speciesTarget)
+  else -- FIXME implement self:breedAll()
+    local mutations, scorers = Forte40.buildMutationGraph(self.breeder.peripheral), Forte40.buildScoring()
+    while true do
+      Forte40.breedAllSpecies(mutations, self.storage, self.breeder, scorers, Forte40.buildTargetSpeciesList(self.catalog, self.breeder))
+      self.catalog:run(self.storage)
+    end
+  end
+end
+function App:analyze(id)
+  local beeRet
+  local residentSleeperTime = 32
+  logger:log('    Analyze: some bee')
+  self.storage:putBee(id, config.registry.analyzerDir, 64, 3) -- slot 3 is magic number
+  sleep(32) -- Analyzer tick is 30 seconds
+  while true do
+    beeRet = 0
+    for slot = 9, 12 do
+      beeRet = beeRet + self.storage.peripheral.pullItem(config.registry.analyzerDir, slot)
+    end
+    if beeRet > 0 then break else
+      logger:clearLine():log('    Analyze: waiting (' .. residentSleeperTime .. ' seconds)')
+      sleep(5) -- Analyzer tick is 30 seconds
+      residentSleeperTime = residentSleeperTime + 5
+    end
+  end
+  logger:clearLine():log('    Analyze: done waiting (was ' .. residentSleeperTime .. ' seconds)\n')
+end
+function App:breedSpecies(species)
+  logger:color(colors.lightBlue)
+        :log('  Breeding: ' .. species .. '\n')
+        :color(colors.white)
+  while true do
+    self.catalog:run(self.storage)
+    if self.catalog.princesses == nil then
+      logger:color(colors.yellow)
+            :log('< Breeding: add more princesses?\n')
+            :color(colors.white)
+      io.read("*l")
+    elseif self.catalog.drones == nil then
+      logger:color(colors.yellow)
+            :log('< Breeding: add more drones?\n')
+            :color(colors.white)
+      io.read("*l")
+    else
+      if self.beeGraph[species] ~= nil then
+        self.parentBreedable = true
+        -- TODO select parent line which exists (i.e. Common can be produced in tons of ways)
+        for _, mutation in ipairs(self.beeGraph[species]) do
+          for _, parent in ipairs({mutation.allele1, mutation.allele2}) do
+            if self.catalog.reference[parent] == nil or
+               self.catalog.reference[parent].drone == nil or
+               self.catalog.reference[parent].droneCount < 2
+            then
+              logger:log('  Breeding: getting parent first\n')
+              self:breedSpecies(parent)
+            end
+          end
+        end
+      else
+        logger:color(colors.red)
+              :log('  Breeder: can\'t breed prime species (' .. species .. ')')
+              :color(colors.white)
+        error('Prime ' .. species .. ' is not found.')
+      end
+      if table.getn(self.beeGraph[species].specialConditions) > 0 then
+        logger:log('  Breeder: special conditions:\n' .. self.beeGraph[species].specialConditions:concat('\n'))
+              :color(colors.yellow)
+              :log('< Breeder: confirm that conditions met\n')
+              :color(colors.white)
+      end
+      -- FIXME do some actual breeding
+      break
+    end
+  end
+  logger:log('  Breeding: untested done.\n')
+end
+
+--- Catalog class
+Catalog = Creator()
+function Catalog:run(storage)
+  if config.registry.useAnalyzer == true then
+    logger:color(colors.lightBlue)
+          :log('  Catalog: analyzing bees\n')
+          :color(colors.white)
+    self:analyzeBees(storage)
+  end
+  logger:debug('  Catalog: creating\n')
+  self:create(storage)
+  logger:color(colors.lightBlue)
+        :log('  Catalog: (TODO) building local mutation graph \n')
+        :color(colors.white)
+  self:buildMutationGraph(storage)
+end
+function Catalog:analyzeBees(storage)
+  local analyzeCount = 0
+  storage:fetch()
+  for id, bee in pairs(storage.bees) do
+    if not bee.individual.isAnalyzed then
+      application:analyze(id)
+      analyzeCount = analyzeCount + 1
+    end
+  end
+  if analyzeCount > 0 then logger:log('    Catalog: analyzed ' .. analyzeCount .. ' new bees\n') end
+end
+function Catalog:create(storage)
+  self.reference = {}
+  self.drones = nil
+  self.princesses = nil
+  self.queens = nil
+  storage:fetch()
+  for id, bee in pairs(storage.bees) do
+    local species = bee.individual.active.species.name
+    if self.reference[species] == nil then self.reference[species] = {} end
+    if ItemTypes[bee.id].isDrone then
+      if self.reference[species].drone == nil then
+        self.reference[species].drone = {}
+        self.reference[species].droneCount = 0
+      end
+      if self.drones == nil then
+        self.drones = {}
+        self.dronesCount = 0
+      end
+      self.reference[species].drone[id] = bee
+      self.reference[species].droneCount = self.reference[species].droneCount + bee.qty
+      self.drones[id] = bee
+      self.dronesCount = self.dronesCount + bee.qty
+    end
+    if ItemTypes[bee.id].isPrincess then
+      if self.reference[species].princess == nil then
+        self.reference[species].princess = {}
+        self.reference[species].princessCount = 0
+      end
+      if self.princesses == nil then
+        self.princesses = {}
+        self.princessesCount = 0
+      end
+      self.reference[species].princess[id] = bee
+      self.reference[species].princessCount = self.reference[species].princessCount + bee.qty
+      self.princesses[id] = bee
+      self.princessesCount = self.princessesCount + bee.qty
+    end
+    if ItemTypes[bee.id].isQueen then
+      if self.queens == nil then self.queens = {} end
+      self.queens[id] = bee
+    end
+    if self.reference[species].drone ~= nil and self.reference[species].princess ~= nil then
+      self.reference[species].pair = true
+    end
+  end
+  if table.getn(self.reference) > 0 then
+    logger:log('    Catalog: have reference for:\n    ')
+    for species, table in pairs(self.reference) do if table.pair == true then logger:log(species, ', ') end end
+    logger:log('\n')
+  end
+end
+function Catalog:buildMutationGraph()
+  -- TODO implement local mutation graph using available bees
+end
+function Catalog:toForte40()
+  local princessList, droneList = {}, {}
+  for id, princess in pairs(self.princesses) do
+    local proxy = princess
+    proxy.id = id
+    table.insert(princessList, proxy)
+  end
+  for id, drone in pairs(self.drones) do
+    local proxy = drone
+    proxy.id = id
+    table.insert(droneList, proxy)
+  end
+  return {
+    ['princesses'] = princessList,
+    ['drones'] = droneList,
+    ['reference'] = self.reference
+  }
 end
 
 --- Breeder classes interface
@@ -787,6 +803,12 @@ IBreeder = Creator()
 -- Stores wrapped peripheral in peripheral attribute
 -- @return IBreeder instance for chaining
 function IBreeder:_init()
+  return self
+end
+--- Clears the breeder
+-- Bees should land into storage system (doesn't matter if analyzed or not)
+-- @return IBreeder instance for chaining
+function IBreeder:clear()
   return self
 end
 
@@ -818,15 +840,19 @@ end
 --- Item ids for bees
 ItemTypes = {
   ['Forestry:beeDroneGE'] = {
-    ['isBee'] = true
+    ['isBee'] = true,
+    ['isDrone'] = true
   },
   ['Forestry:beePrincessGE'] = {
-    ['isBee'] = true
+    ['isBee'] = true,
+    ['isPrincess'] = true
   },
   ['Forestry:beeQueenGE'] = {
-    ['isBee'] = true
+    ['isBee'] = true,
+    ['isQueen'] = true
   },
 }
+BeeTypes = {}
 
 --- Configuration class
 Config = Creator()
@@ -879,6 +905,12 @@ function Log:color(color)
   term.setTextColor(color)
   return self
 end
+function Log:clearLine()
+  local x, y = term.getCursorPos()
+  term.clearLine()
+  term.setCursorPos(1, y)
+  return self
+end
 function Log:finish()
   self:color(colors.green)
       :log('> Successful finish (' .. self.logname .. ')\n')
@@ -924,6 +956,7 @@ end
 
 logger = Log()
 config = Config('.openbee/config')
-application = App(arg)
+application = App({...})
 application:parseArgs()
+application:main()
 logger:finish()
