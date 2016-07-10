@@ -1,3 +1,4 @@
+--- Second_Fry's openbee module (v1.0.0)
 --- AE2 storage
 function StorageProvider(Creator, IStorage, config, logger, ItemTypes)
   local StorageAE = Creator(IStorage)

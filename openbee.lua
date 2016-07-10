@@ -1,4 +1,4 @@
------- Second_Fry's openbee AE2 fork (v2.0.0)
+------ Second_Fry's openbee modular fork (v2.0.0)
 ------ Original idea and code by Forte40 @ GitHub (forked at v2.2.1)
 --- Default configuration
 --- All sides are used for peripheral.wrap calls. Can be proxied (check OpenPeripheral Proxy).
@@ -499,7 +499,7 @@ local App = Creator()
 function App:_init(args)
   self.version = '2.0.0'
   logger:color(colors.green)
-        :log('> Second_Fry\'s openbee AE2 fork (v' .. self.version .. ')\n')
+        :log('> Second_Fry\'s openbee modular fork (v' .. self.version .. ')\n')
         :log('> Thanks to Forte40 @ GitHub (forked on v2.2.1)\n')
         :color(colors.gray)
         :log('  Got arguments: ' .. table.concat(args, ', ') .. '\n')

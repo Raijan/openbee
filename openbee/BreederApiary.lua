@@ -1,3 +1,4 @@
+--- Second_Fry's openbee module (v1.0.0)
 --- Apiary breeder
 function BreederProvider(Creator, IBreeder, config, logger, ItemTypes)
   local BreederApiary = Creator(IBreeder)
