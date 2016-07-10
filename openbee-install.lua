@@ -46,6 +46,10 @@ for _, filename in ipairs(filenames) do
       io.write(' same file\n')
       term.setTextColor(colors.white)
     else
+      -- TODO implement coroutines
+      if filename == 'openbee-install.lua' then
+        filename = '.' .. filename
+      end
       local file = fs.open(filename, "w")
       file.write(data)
       file.close()
@@ -53,11 +57,11 @@ for _, filename in ipairs(filenames) do
       io.write(' success\n')
       term.setTextColor(colors.white)
 
-      if filename == 'openbee-install.lua' then
+      if filename == '.openbee-install.lua' then
         term.setTextColor(colors.yellow)
-        io.write('  Install file updated, branching to new install\n')
+        io.write('  Install file updated, manual user console inputs required:\nmove .openbee-install.lua openbee-install.lua\nopenbee-install.lua\n')
         term.setTextColor(colors.white)
-        return shell.run(filename)
+        return
       end
     end
   else error('  Bad HTTP response code') end
