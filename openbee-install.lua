@@ -1,9 +1,10 @@
 --- Second_Fry's openbee modular fork (v2.0.0)
 --- Original code and idea by Forte40 @ GitHub (forked at v2.2.1)
+--- Hosted at http://pastebin.com/XxjND24H
 
 local branch = 'master'
 local url = 'https://raw.github.com/secondfry/openbee/' .. branch .. '/'
-local filenames = {'openbee-install.lua', 'openbee.lua', 'matron.lua', 'openbee/BreederApiary.lua', 'openbee/StorageAE.lua' }
+local filenames = {'openbee-install.lua', 'openbee.lua', 'matron.lua', 'openbee/BreederApiary.lua', 'openbee/StorageAE.lua', 'README.md'}
 local folders = {'openbee'}
 
 term.setTextColor(colors.green)
@@ -44,6 +45,13 @@ for _, filename in ipairs(filenames) do
     if data == dataCurrent then
       term.setTextColor(colors.gray)
       io.write(' same file\n')
+      term.setTextColor(colors.white)
+    elseif dataCurrent == '' then
+      local file = fs.open(filename, "w")
+      file.write(data)
+      file.close()
+      term.setTextColor(colors.gray)
+      io.write(' success\n')
       term.setTextColor(colors.white)
     else
       -- TODO implement coroutines
