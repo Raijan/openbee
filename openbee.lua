@@ -727,7 +727,9 @@ end
 function Catalog:create(storage)
   self.reference = {}
   self.drones = nil
+  self.dronesCount = 0
   self.princesses = nil
+  self.princessesCount = 0
   self.queens = nil
   storage:fetch()
   for id, bee in pairs(storage.bees) do
@@ -738,10 +740,7 @@ function Catalog:create(storage)
         self.reference[species].drone = {}
         self.reference[species].droneCount = 0
       end
-      if self.drones == nil then
-        self.drones = {}
-        self.dronesCount = 0
-      end
+      if self.drones == nil then self.drones = {} end
       self.reference[species].drone[id] = bee
       self.reference[species].droneCount = self.reference[species].droneCount + bee.qty
       self.drones[id] = bee
@@ -752,10 +751,7 @@ function Catalog:create(storage)
         self.reference[species].princess = {}
         self.reference[species].princessCount = 0
       end
-      if self.princesses == nil then
-        self.princesses = {}
-        self.princessesCount = 0
-      end
+      if self.princesses == nil then self.princesses = {} end
       self.reference[species].princess[id] = bee
       self.reference[species].princessCount = self.reference[species].princessCount + bee.qty
       self.princesses[id] = bee
@@ -780,16 +776,16 @@ function Catalog:buildMutationGraph()
 end
 function Catalog:toForte40()
   local princessList, droneList = {}, {}
-  for id, princess in pairs(self.princesses) do
+  if self.princesses ~= nil then for id, princess in pairs(self.princesses) do
     local proxy = princess
     proxy.id = id
     table.insert(princessList, proxy)
-  end
-  for id, drone in pairs(self.drones) do
+  end end
+  if self.drones ~= nil then for id, drone in pairs(self.drones) do
     local proxy = drone
     proxy.id = id
     table.insert(droneList, proxy)
-  end
+  end end
   return {
     ['princesses'] = princessList,
     ['drones'] = droneList,

@@ -37,7 +37,7 @@ function StorageProvider(Creator, IStorage, config, logger, ItemTypes)
     self.items = self.peripheral.getAvailableItems('all')
     self.bees = {}
     for _, item in ipairs(self.items) do
-      if ItemTypes[item.fingerprint.id].isBee == true then
+      if ItemTypes[item.fingerprint.id] ~= nil and ItemTypes[item.fingerprint.id].isBee == true then
         self.bees[item.fingerprint] = item.item
       end
     end
