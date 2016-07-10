@@ -573,7 +573,7 @@ function App:analyzerClear()
       break
     end
     if beeTest == nil then break else
-      self.storage:putBee(beeID, config.registry.analyzerDir, 1, 6)
+      self.storage:putBee(beeID, config.registry.analyzerDir, 1, 8)
       sleep(1)
       residentSleeperTime = residentSleeperTime + 1
       beeRet = self.storage.peripheral.pullItem(config.registry.analyzerDir, 9)
