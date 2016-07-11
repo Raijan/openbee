@@ -550,9 +550,11 @@ function App:initMutationGraph()
   for _, mutation in ipairs(beeGraph) do
     if self.beeGraph[mutation.result] == nil then self.beeGraph[mutation.result] = {} end
     table.insert(self.beeGraph[mutation.result], mutation)
-  end
-  for _, species in ipairs(self.breeder.peripheral.listAllSpecies()) do
-    BeeTypes[species.name] = true
+    -- Somehow doesn't report Unusual as species via breeder.listAllSpecies()
+    -- So using fix dirty fix
+    BeeTypes[mutation.allele1] = true
+    BeeTypes[mutation.allele2] = true
+    BeeTypes[mutation.result] = true
   end
 end
 function App:analyzerClear()
