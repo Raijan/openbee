@@ -3,7 +3,7 @@
 --- Hosted at http://pastebin.com/XxjND24H
 
 local branch = 'master'
-local url = 'https://raw.github.com/secondfry/openbee/' .. branch .. '/'
+local url = 'https://raw.github.com/raijan/openbee/' .. branch .. '/'
 local filenames = {'openbee-install.lua', 'openbee.lua', 'matron.lua', 'openbee/BreederApiary.lua', 'openbee/StorageAE.lua', 'README.md'}
 local folders = {'openbee'}
 
