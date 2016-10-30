@@ -33,7 +33,7 @@ end
 -- find apiaries
 local sides = peripheral.getNames()
 for _, side in ipairs(sides) do
-  if peripheral.getType(side):sub(1,10) == "apiculture" then
+  if peripheral.getType(side):sub(10,19) == "apiculture" then
     table.insert(apiaries, peripheral.wrap(side))
   end
 end
